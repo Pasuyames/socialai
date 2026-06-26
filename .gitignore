@@ -1,0 +1,51 @@
+# ── Bağımlılıklar ─────────────────────────────────────────
+node_modules/
+.pnpm-store/
+
+# ── Build / derleme çıktıları ─────────────────────────────
+.next/
+out/
+build/
+dist/
+*.tsbuildinfo
+.turbo/
+
+# ── GİZLİ: ortam değişkenleri & secret'lar ────────────────
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+# GCP servis hesabı anahtarları & her türlü credential JSON
+vertex-key.json
+*-key.json
+*credentials*.json
+*service-account*.json
+gcp-*.json
+
+# ── GİZLİ: veritabanı (kullanıcı verisi, şifre hash'leri) ──
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+
+# ── GİZLİ: üretilmiş içerik / müşteri verisi ──────────────
+packages/web/public/uploads/
+packages/web/storage/
+packages/web/public/reports/
+
+# ── Loglar ────────────────────────────────────────────────
+*.log
+logs/
+npm-debug.log*
+pnpm-debug.log*
+
+# ── Editör / OS ───────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# ── Test / geçici ─────────────────────────────────────────
+coverage/
+*.tmp

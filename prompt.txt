@@ -1,0 +1,95 @@
+
+You are an expert software architect specializing in social media trend analysis. You will be given a TypeScript file and a high-level goal from the project owner. Your task is to analyze the code and propose concrete, actionable alternatives that align with the project's core mission.
+
+**The Code (scrapeSources.ts):**
+```typescript
+import FirecrawlApp from "@mendable/firecrawl-js";
+import { z } from "zod";
+
+const StorySchema = z.object({
+  headline: z.string(),
+  link: z.string(),
+  date_posted: z.string(),
+});
+const StoriesSchema = z.object({ stories: z.array(StorySchema) });
+type Story = z.infer<typeof StorySchema>;
+
+function buildFirecrawlPrompt(sourceUrl: string): string {
+  const today = new Date().toLocaleDateString();
+  return `Return today's AI or LLM related stories from ${sourceUrl} posted on ${today}. Return only JSON in the format { "stories": [{ "headline": "headline1", "link": "link1", "date_posted": "YYYY-MM-DD" }] }. If a link is relative, prepend ${sourceUrl}.`;
+}
+
+async function fetchXStories(username: string, since: string): Promise<Story[]> {
+  const query = `from:${username} has:media -is:retweet -is:reply`;
+  const apiUrl = `https://api.x.com/2/tweets/search/recent?query=${encodeURIComponent(query)}&max_results=10&start_time=${encodeURIComponent(since)}`;
+  try {
+    const response = await fetch(apiUrl, {
+      headers: { Authorization: `Bearer ${process.env.X_API_BEARER_TOKEN}` },
+    });
+    if (!response.ok) {
+      console.error(`Failed to fetch X: ${response.statusText}`);
+      return [];
+    }
+    const tweets = await response.json();
+    if (!tweets.data) return [];
+    return tweets.data.map((tweet: { id: string; text: string }): Story => ({
+      headline: tweet.text,
+      link: "https://x.com/i/status/" + tweet.id,
+      date_posted: new Date().toISOString(),
+    }));
+  } catch (e) {
+    console.error("Error in fetchXStories", e);
+    return [];
+  }
+}
+
+async function scrapeWebSource(source: string, apiKey?: string): Promise<Story[]> {
+  try {
+    const app = new FirecrawlApp({ apiKey });
+    const scrapeResult = await app.extract({
+      urls: [source],
+      prompt: buildFirecrawlPrompt(source),
+      schema: StoriesSchema,
+    });
+    if (!scrapeResult.success || !scrapeResult.data) return [];
+    const validation = StoriesSchema.safeParse(scrapeResult.data);
+    if (!validation.success) return [];
+    return validation.data.stories;
+  } catch (e) {
+    console.error("Error in scrapeWebSource", e);
+    return [];
+  }
+}
+
+export async function scrapeSources(sources: { identifier: string }[], apiKey?: string): Promise<Story[]> {
+  const allStories: Story[] = [];
+  const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  for (const sourceObj of sources) {
+    const source = sourceObj.identifier;
+    let stories: Story[] = [];
+    if (source.includes("x.com")) {
+      const username = source.split('/').pop() || '';
+      if (username) stories = await fetchXStories(username, since);
+    } else {
+      stories = await scrapeWebSource(source, apiKey);
+    }
+    allStories.push(...stories);
+  }
+  return allStories;
+}
+```
+
+**The Project Owner's Goal:**
+The project owner wants the agent to find trends and ideas for creating engaging social media content. They are not satisfied with the agent's current dependency on scraping `x.com` (Twitter) and want more relevant and creative sources.
+
+**Your Task:**
+Based on the provided code, especially the generic `scrapeWebSource` function, propose **3 distinct and creative alternative DATA SOURCES** for this agent. 
+
+**Crucially, these alternatives must still serve the project's original goal: to find trends and ideas for creating engaging social media content.** They should be more reliable or creative than just scraping Twitter.
+
+For each proposed data source, please describe:
+1.  **The Data Source** (e.g., A specific website, a type of RSS feed).
+2.  **Why It's a Good Source** (e.g., 'It provides real-time user questions', 'It shows emerging visual trends').
+3.  **A Sample URL** for the agent to scrape.
+
+Present your answer as a clear, well-structured report.

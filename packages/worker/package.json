@@ -1,0 +1,27 @@
+{
+  "name": "worker",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
+    "build": "tsc",
+    "generate": "prisma generate --schema=../web/prisma/schema.prisma"
+  },
+  "dependencies": {
+    "@google-cloud/vertexai": "^1.12.0",
+    "@mendable/firecrawl-js": "^4.20.0",
+    "@prisma/client": "^5.22.0",
+    "@socialai/common": "workspace:*",
+    "bullmq": "^5.0.0",
+    "dotenv": "^17.4.2",
+    "ioredis": "^5.0.0",
+    "prisma": "^5.22.0",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "tsx": "^4.0.0",
+    "typescript": "^5"
+  }
+}

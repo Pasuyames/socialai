@@ -1,0 +1,232 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ==================== ORGANİZASYON & KULLANICI ====================
+model Organization {
+  id        Int      @id @default(autoincrement())
+  name      String
+  slug      String   @unique
+  plan      String   @default("starter") // starter | pro | agency
+  brands   Brand[]
+  users    User[]
+  tickets  SupportTicket[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model User {
+  id             Int          @id @default(autoincrement())
+  email          String       @unique
+  passwordHash   String?
+  name           String?
+  role           String       @default("member") // owner | admin | member
+  organizationId Int
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  sessions       Session[]
+  tickets        SupportTicket[]
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@index([organizationId])
+}
+
+model Session {
+  id        Int      @id @default(autoincrement())
+  token     String   @unique
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+// ==================== MARKA & KİMLİK ====================
+model Brand {
+  id               Int       @id @default(autoincrement())
+  name             String
+  slug             String    @unique
+  websiteUrl       String?
+  instagramHandle  String?
+  linkedinUrl      String?
+  driveFolderId    String?
+
+  organizationId   Int?
+  organization     Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+
+  // Sektör
+  industry         String?   @default("general")  // fashion | food | tech | fitness | finance | law | real_estate | beauty | education | healthcare | hospitality | ecommerce | general
+
+  // Görsel Kimlik
+  brandColor       String?   @default("#1a1a2e")  // Hex renk kodu, PDF raporlarda kullanılır
+  logoPath         String?   // /logos/slug-logo.png — PDF kapağında kullanılır
+
+  // Ajanların Dolduracağı Alanlar
+  rawScrapedData   String?   // DataMiner
+  brandStrategy    String?   // BrandStrategist
+  toneOfVoice      String?   // ToneOfVoiceSpecialist
+  visualIdentity   String?   // VisualResearcher
+  trendFindings    String?   // TrendFinder (brandStrategy'den ayrı!)
+
+  plans            MonthlyPlan[]
+  memories         BrandMemory[]
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@index([organizationId])
+}
+
+// ==================== AYLIK PLAN ====================
+model MonthlyPlan {
+  id            Int      @id @default(autoincrement())
+  brandId       Int
+  brand         Brand    @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  month         Int
+  year          Int
+
+  clientBrief   String?  // Müşterinin özel notları
+  clientToken   String?  @unique  // Müşteri portalı erişim token'ı (UUID)
+  trendReport   String?  // DataAnalystV2 raporu
+  directorBrief String?  // MarketingDirector aylık brief
+  reportPath    String?  // ReportGenerator PDF yolu
+  status        String   @default("planning")
+
+  posts         Post[]
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([brandId, status])
+}
+
+// ==================== GÖNDERİLER ====================
+model Post {
+  id             Int         @id @default(autoincrement())
+  planId         Int
+  plan           MonthlyPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  // IdeationSpecialist
+  topic          String?
+  hook           String?     // Viral açılış cümlesi (ayrı saklanır)
+  concept        String?     // Görsel/video konsepti (ayrı saklanır)
+  platform       String?     @default("instagram") // instagram | linkedin | twitter
+
+  // Copywriter → EditorInChief → EngagementSpecialist
+  caption        String?     // Sadece gövde metin (hashtag gömülü değil)
+  hashtags       String?     // Ayrı alan — caption'a gömme!
+
+  // VisualInspirationAgent
+  inspirationUrls  String?   // JSON string[] — Unsplash/Pinterest görsel URL'leri
+  inspirationStyle String?   // Gemini Vision'ın stil analizi özeti
+
+  // PromptEngineer → ImageGenerator
+  imagePrompt      String?
+  negativePrompt   String?   // VisualInspector'a geçmek için
+  productImagePath String?   // Eşleşen gerçek ürün paketi mockup'ı (compositing için)
+  imagePath        String?   // Feed görseli
+  storyImagePath   String?   // 9:16 story görseli
+
+  // ContentScheduler
+  scheduledAt    DateTime?
+
+  // Publisher
+  publishedAt    DateTime?
+  externalPostId String?     // Instagram/LinkedIn post ID
+
+  metrics        PostMetrics?
+
+  // Durum & Revizyon
+  status         String      @default("ideation")
+  revisionNotes  String?
+  qualityScore   Int?        // EditorInChief skoru (0-100)
+
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  @@index([planId, status])
+}
+
+// ==================== PERFORMANS METRİKLERİ ====================
+model PostMetrics {
+  id          Int      @id @default(autoincrement())
+  postId      Int      @unique
+  post        Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  likes       Int      @default(0)
+  comments    Int      @default(0)
+  shares      Int      @default(0)
+  reach       Int      @default(0)
+  impressions Int      @default(0)
+  saves       Int      @default(0)
+  fetchedAt   DateTime @default(now())
+
+  @@index([postId])
+}
+
+// ==================== AJAN İŞ KAYITLARI ====================
+model AgentLog {
+  id         Int      @id @default(autoincrement())
+  agentName  String
+  action     String
+  targetType String   // Brand | Plan | Post
+  targetId   Int
+  details    String?  // JSON — hata detayı, skor, ret sebebi vb.
+  createdAt  DateTime @default(now())
+
+  @@index([targetId, targetType])
+  @@index([createdAt])
+}
+
+// ==================== DESTEK BİLETLERİ ====================
+model SupportTicket {
+  id             Int             @id @default(autoincrement())
+  organizationId Int
+  organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  userId         Int
+  user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subject        String
+  category       String          @default("general") // general | billing | bug | feature
+  priority       String          @default("normal")  // low | normal | high | urgent
+  status         String          @default("open")    // open | in_progress | resolved | closed
+  messages       TicketMessage[]
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  @@index([organizationId])
+  @@index([status])
+}
+
+model TicketMessage {
+  id        Int            @id @default(autoincrement())
+  ticketId  Int
+  ticket    SupportTicket  @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  authorId  Int?           // null ise sistem mesajı
+  isAdmin   Boolean        @default(false)
+  body      String
+  createdAt DateTime       @default(now())
+
+  @@index([ticketId])
+}
+
+// ==================== MARKA HAFIZASI ====================
+model BrandMemory {
+  id        Int      @id @default(autoincrement())
+  brandId   Int
+  brand     Brand    @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  month     Int
+  year      Int
+
+  // Archivist yapılandırılmış JSON yazar:
+  // { topFormats, failedApproaches, audienceInsights, nextMonthPriorities,
+  //   stats: { total, approved, published, rejected } }
+  learnings String
+
+  createdAt DateTime @default(now())
+
+  @@index([brandId])
+}
