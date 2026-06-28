@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
 import Link from "next/link";
-import { ShieldCheck, Building2, LifeBuoy, LayoutDashboard, LogOut } from "lucide-react";
+import { ShieldCheck, Building2, LifeBuoy, LayoutDashboard, LogOut, ListChecks, Activity } from "lucide-react";
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
   const session = await auth();
@@ -24,6 +24,8 @@ export default async function AdminLayout({ children }: { children: React.ReactN
             { href: "/admin",         icon: LayoutDashboard, label: "Genel Bakış" },
             { href: "/admin/orgs",    icon: Building2,       label: "Organizasyonlar" },
             { href: "/admin/tickets", icon: LifeBuoy,        label: "Destek Biletleri" },
+            { href: "/admin/activity", icon: Activity,       label: "Aktivite (AgentLog)" },
+            { href: "/admin/queues",  icon: ListChecks,     label: "Kuyruklar (Bull-Board)" },
           ].map(({ href, icon: Icon, label }) => (
             <Link key={href} href={href}
               className="flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm text-muted-foreground hover:text-white hover:bg-[#1A1A2E] transition-colors">

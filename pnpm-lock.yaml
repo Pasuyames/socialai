@@ -22,6 +22,12 @@ importers:
 
   packages/web:
     dependencies:
+      '@bull-board/api':
+        specifier: ^8.0.1
+        version: 8.0.1(@bull-board/ui@8.0.1)
+      '@bull-board/hono':
+        specifier: ^8.0.1
+        version: 8.0.1(hono@4.12.27)
       '@google-cloud/vertexai':
         specifier: ^1.12.0
         version: 1.12.0
@@ -31,6 +37,9 @@ importers:
       '@google/generative-ai':
         specifier: ^0.24.1
         version: 0.24.1
+      '@hono/node-server':
+        specifier: ^2.0.6
+        version: 2.0.6(hono@4.12.27)
       '@mendable/firecrawl-js':
         specifier: ^4.28.2
         version: 4.28.2
@@ -67,6 +76,9 @@ importers:
       googleapis:
         specifier: ^171.4.0
         version: 171.4.0
+      hono:
+        specifier: ^4.12.27
+        version: 4.12.27
       ioredis:
         specifier: ^5.0.0
         version: 5.10.1
@@ -279,6 +291,19 @@ packages:
 
   '@borewit/text-codec@0.2.2':
     resolution: {integrity: sha512-DDaRehssg1aNrH4+2hnj1B7vnUGEjU6OIlyRdkMd0aUdIUvKXrJfXsy8LVtXAy7DRvYVluWbMspsRhz2lcW0mQ==}
+
+  '@bull-board/api@8.0.1':
+    resolution: {integrity: sha512-7FELJHRQPtjH9+r/DUArr4pDVU8r1yeDS9azQUzFtIbsUT5xGjyg5R1RB0I/RfwFfK5bqho/4cpzxJ/UnQjSKA==}
+    peerDependencies:
+      '@bull-board/ui': 8.0.1
+
+  '@bull-board/hono@8.0.1':
+    resolution: {integrity: sha512-dwGUNOea609eLrcnTg7IbW7Z3zyeANtUdaGvVF/BgLUu+FgYPIXrp/ZGs5m16xT+NvpyZt8ijpW0oOR3wY+joQ==}
+    peerDependencies:
+      hono: ^4
+
+  '@bull-board/ui@8.0.1':
+    resolution: {integrity: sha512-gKEGSD8dlUoWFGJJ4I4Q5bDtfB7yJwGfpgA2DVn1G1TzlUSN5n4fzzcGpLf5fS+QhR7tB/niydUiFRQ2zrjVrQ==}
 
   '@emnapi/core@1.10.0':
     resolution: {integrity: sha512-yq6OkJ4p82CAfPl0u9mQebQHKPJkY7WrIuk205cTYnYe+k2Z8YBh11FrbRG/H6ihirqcacOgl2BIO8oyMQLeXw==}
@@ -499,6 +524,12 @@ packages:
   '@google/generative-ai@0.24.1':
     resolution: {integrity: sha512-MqO+MLfM6kjxcKoy0p1wRzG3b4ZZXtPI+z2IE26UogS2Cm/XHO+7gGRBh6gcJsOiIVoH93UwKvW4HdgiOZCy9Q==}
     engines: {node: '>=18.0.0'}
+
+  '@hono/node-server@2.0.6':
+    resolution: {integrity: sha512-7DeRlKG57JDBNZ5Qj2jwVdgwQy4b0tLubRLl3zCf91/rCf9i7p1V5FtW/yWibm1uUHE493ts9ZXH/7g/LQWl+g==}
+    engines: {node: '>=20'}
+    peerDependencies:
+      hono: ^4
 
   '@humanfs/core@0.19.2':
     resolution: {integrity: sha512-UhXNm+CFMWcbChXywFwkmhqjs3PRCmcSa/hfBgLIb7oQ5HNb1wS0icWsGtSAUNgefHeI+eBrA8I1fxmbHsGdvA==}
@@ -1595,6 +1626,11 @@ packages:
   ecdsa-sig-formatter@1.0.11:
     resolution: {integrity: sha512-nagl3RYrbNv6kQkeJIpt6NJZy8twLB/2vtz6yN9Z4vRKHN4/QZJIEbqohALSgwKdnksuY3k5Addp5lg8sVoVcQ==}
 
+  ejs@6.0.1:
+    resolution: {integrity: sha512-UaaM14yby8U3k02ihS1Bmj5Kz2d7CCQM1scxpgs4Mhkq8F1wR2gl3+Ts4h5Ne4Mnt7M9m4Dw7jsuMr3+xO4vZA==}
+    engines: {node: '>=0.12.18'}
+    hasBin: true
+
   electron-to-chromium@1.5.344:
     resolution: {integrity: sha512-4MxfbmNDm+KPh066EZy+eUnkcDPcZ35wNmOWzFuh/ijvHsve6kbLTLURy88uCNK5FbpN+yk2nQY6BYh1GEt+wg==}
 
@@ -2025,6 +2061,10 @@ packages:
   hermes-parser@0.25.1:
     resolution: {integrity: sha512-6pEjquH3rqaI6cYAXYPcz9MS4rY6R4ngRgrgfDshRptUZIc3lw0MCIJIGDj9++mfySOuPTHB4nrSW99BCvOPIA==}
 
+  hono@4.12.27:
+    resolution: {integrity: sha512-1yrb/+w6HWQJrUCLkJ2IF5jNIPvvFkblV5RNOYl6bV+OA6p9GLcMpHFFGTosSvHvcAUibuUukRqhlYI4z32C7Q==}
+    engines: {node: '>=16.9.0'}
+
   html-entities@2.6.0:
     resolution: {integrity: sha512-kig+rMn/QOVRvr7c86gQ8lWXq+Hkv6CbAH1hLu+RG338StTpE8Z0b44SDVaqVu7HGKf27frdmUYEs9hTUX/cLQ==}
 
@@ -2292,6 +2332,9 @@ packages:
 
   lodash.merge@4.6.2:
     resolution: {integrity: sha512-0KpjqXRVvrYyCsX1swR/XTK0va6VQkQM6MNo7PqW77ByjAhoARA8EfrP1N4+KlKj8YS0ZUCtRT/YUuhyYDujIQ==}
+
+  lodash@4.18.1:
+    resolution: {integrity: sha512-dMInicTPVE8d1e5otfwmmjlxkZoUpiVLwyeTdUsi/Caj/gfzzblBcCE5sRHV/AsjuCmxWrte2TNGSYuCeCq+0Q==}
 
   long@5.3.2:
     resolution: {integrity: sha512-mNAgZ1GmyNhD7AuqnTG3/VQ26o760+ZYBPKjPvugO8+nLbYfX6TVpJPseBvopbdY+qpZ/lKUnmEc1LeZYS3QAA==}
@@ -2736,6 +2779,9 @@ packages:
   redis-errors@1.2.0:
     resolution: {integrity: sha512-1qny3OExCf0UvUV/5wpYKf2YwPcOqXzkwKKSmKHiE6ZMQs5heeE/c8eXK+PNllPvmjgAbfnsbpkGZWy8cBpn9w==}
     engines: {node: '>=4'}
+
+  redis-info@3.1.0:
+    resolution: {integrity: sha512-ER4L9Sh/vm63DkIE0bkSjxluQlioBiBgf5w1UuldaW/3vPcecdljVDisZhmnCMvsxHNiARTTDDHGg9cGwTfrKg==}
 
   redis-parser@3.0.0:
     resolution: {integrity: sha512-DJnGAeenTdpMEH6uAJRK/uiyEIH9WVsUmoLwzudwGJUwZPp80PDBWPHXSAGNPwNvIXAbe7MSUB1zQFugFml66A==}
@@ -3282,6 +3328,22 @@ snapshots:
 
   '@borewit/text-codec@0.2.2': {}
 
+  '@bull-board/api@8.0.1(@bull-board/ui@8.0.1)':
+    dependencies:
+      '@bull-board/ui': 8.0.1
+      redis-info: 3.1.0
+
+  '@bull-board/hono@8.0.1(hono@4.12.27)':
+    dependencies:
+      '@bull-board/api': 8.0.1(@bull-board/ui@8.0.1)
+      '@bull-board/ui': 8.0.1
+      ejs: 6.0.1
+      hono: 4.12.27
+
+  '@bull-board/ui@8.0.1':
+    dependencies:
+      '@bull-board/api': 8.0.1(@bull-board/ui@8.0.1)
+
   '@emnapi/core@1.10.0':
     dependencies:
       '@emnapi/wasi-threads': 1.2.1
@@ -3445,6 +3507,10 @@ snapshots:
       - utf-8-validate
 
   '@google/generative-ai@0.24.1': {}
+
+  '@hono/node-server@2.0.6(hono@4.12.27)':
+    dependencies:
+      hono: 4.12.27
 
   '@humanfs/core@0.19.2':
     dependencies:
@@ -4605,6 +4671,8 @@ snapshots:
     dependencies:
       safe-buffer: 5.2.1
 
+  ejs@6.0.1: {}
+
   electron-to-chromium@1.5.344: {}
 
   emoji-regex@9.2.2: {}
@@ -5264,6 +5332,8 @@ snapshots:
     dependencies:
       hermes-estree: 0.25.1
 
+  hono@4.12.27: {}
+
   html-entities@2.6.0: {}
 
   htmlparser2@10.1.0:
@@ -5575,6 +5645,8 @@ snapshots:
   lodash.isarguments@3.1.0: {}
 
   lodash.merge@4.6.2: {}
+
+  lodash@4.18.1: {}
 
   long@5.3.2: {}
 
@@ -5983,6 +6055,10 @@ snapshots:
       picomatch: 2.3.2
 
   redis-errors@1.2.0: {}
+
+  redis-info@3.1.0:
+    dependencies:
+      lodash: 4.18.1
 
   redis-parser@3.0.0:
     dependencies:
