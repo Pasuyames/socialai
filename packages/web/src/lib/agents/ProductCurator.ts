@@ -34,18 +34,19 @@ export class ProductCuratorAgent {
       // Mevcut (analiz edilmiş) katalogu yükle
       const existing = this.existingCatalog(brand.rawScrapedData);
 
-      // Güncel katalogu çek
-      const fresh = await scrapeProductCatalog(url);
+      // Güncel katalogu çek — SAF METİN modu (görsel link/indirme yok)
+      const fresh = await scrapeProductCatalog(url, { images: false });
       if (fresh.length === 0) {
         await this.log(brandId, "UYARI: Sitede ürün bulunamadı (sitemap/JSON-LD boş).");
         return { success: false, newCount: 0, total: 0, error: "Ürün bulunamadı." };
       }
 
-      // Yeni ürünleri tespit et + görsel analiz yap, eskileri koru
+      // Yeni ürünleri tespit et, eskileri koru — Gemini Vision analizi devre dışı
       const { catalog, newCount, analyzedCount } = await curateCatalog(
         fresh,
         existing,
         (msg) => this.log(brandId, msg),
+        { analyzeImages: false },
       );
 
       // rawScrapedData'yı güncelle (mevcut yapıyı koru, katalogu değiştir)
@@ -64,8 +65,9 @@ export class ProductCuratorAgent {
 
       await this.log(
         brandId,
-        `Senkronizasyon tamamlandı: ${catalog.length} ürün (${newCount} yeni, ${analyzedCount} görsel analiz edildi).`,
+        `Senkronizasyon tamamlandı: ${catalog.length} ürün (${newCount} yeni, saf metin — görsel modülü devre dışı).`,
       );
+      void analyzedCount; // görsel analizi kapalı: her zaman 0
 
       return { success: true, newCount, total: catalog.length };
 

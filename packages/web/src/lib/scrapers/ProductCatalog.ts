@@ -36,16 +36,29 @@ const MAX_PRODUCTS  = 20;
 const FETCH_TIMEOUT = 15_000;
 const CONCURRENCY   = 3;
 
+export interface CatalogScrapeOptions {
+  // Görsel madenciliği (link okuma + indirme). Maliyet/kota koruması için
+  // VARSAYILAN KAPALI: yalnızca saf ürün metin verisi (isim/fiyat/açıklama) çekilir.
+  // İleride görsel pipeline tekrar açılırsa `images: true` geçilir.
+  images?: boolean;
+}
+
 // ─── Ana Fonksiyon ────────────────────────────────────────────────────────────
 // E-ticaret sitelerinden (ikas, Shopify vb.) yapılandırılmış ürün kataloğu çeker:
-// 1. products.xml sitemap'inden ürün URL'leri + görselleri
+// 1. products.xml sitemap'inden ürün URL'leri
 // 2. Her ürün sayfasının JSON-LD verisinden isim/fiyat/açıklama
-// 3. Paket görsellerini local'e indirir
+// 3. (yalnızca images=true ise) paket görsellerini local'e indirir
+//
+// VARSAYILAN olarak SADECE METİN: görsel linkleri okunmaz, görsel indirilmez.
 
-export async function scrapeProductCatalog(baseUrl: string): Promise<ProductInfo[]> {
+export async function scrapeProductCatalog(
+  baseUrl: string,
+  opts: CatalogScrapeOptions = {},
+): Promise<ProductInfo[]> {
+  const withImages = opts.images ?? false;
   const origin = new URL(baseUrl).origin;
 
-  const entries = await fetchProductSitemap(origin);
+  const entries = await fetchProductSitemap(origin, withImages);
   if (entries.length === 0) return [];
 
   // Ürün detaylarını paralel çek (limitli)
@@ -55,18 +68,20 @@ export async function scrapeProductCatalog(baseUrl: string): Promise<ProductInfo
     while (queue.length > 0) {
       const entry = queue.shift();
       if (!entry) break;
-      const info = await fetchProductInfo(entry).catch(() => null);
+      const info = await fetchProductInfo(entry, withImages).catch(() => null);
       if (info) products.push(info);
     }
   });
   await Promise.all(workers);
 
-  // Görselleri indir
-  const uploadDir = path.join(process.cwd(), "public", "uploads", "products");
-  await fs.promises.mkdir(uploadDir, { recursive: true });
-  for (const p of products) {
-    if (!p.imageUrl) continue;
-    p.localImagePath = await downloadImage(p.imageUrl, p.url, uploadDir).catch(() => null);
+  // Görsel indirme — yalnızca açıkça istenirse (saf-metin modda atlanır)
+  if (withImages) {
+    const uploadDir = path.join(process.cwd(), "public", "uploads", "products");
+    await fs.promises.mkdir(uploadDir, { recursive: true });
+    for (const p of products) {
+      if (!p.imageUrl) continue;
+      p.localImagePath = await downloadImage(p.imageUrl, p.url, uploadDir).catch(() => null);
+    }
   }
 
   return products;
@@ -118,11 +133,20 @@ Aşağıdaki bilgileri çıkar ve SADECE JSON dön:
 // - Daha önce analiz edilmiş ürünlerin görsel hafızasını korur (yeniden analiz yok)
 // - YENİ ürünleri Gemini Vision ile analiz edip hafızaya kaydeder
 
+export interface CurateOptions {
+  // Gemini Vision ile yeni ürün paket görseli analizi (MALİYETLİ LLM çağrısı).
+  // Maliyet/kota koruması için VARSAYILAN KAPALI. Açıkken yalnızca daha önce
+  // analiz edilmemiş YENİ ürünler için Vision çağrısı yapılır.
+  analyzeImages?: boolean;
+}
+
 export async function curateCatalog(
   fresh: ProductInfo[],
   existing: ProductInfo[],
   log?: (msg: string) => Promise<void>,
+  opts: CurateOptions = {},
 ): Promise<{ catalog: ProductInfo[]; newCount: number; analyzedCount: number }> {
+  const analyzeImages = opts.analyzeImages ?? false;
   const existingByUrl = new Map(existing.map(p => [p.url, p]));
   let newCount = 0;
   let analyzedCount = 0;
@@ -136,8 +160,12 @@ export async function curateCatalog(
       continue;
     }
 
-    // Yeni ürün → görsel analiz et
+    // Yeni ürün sayımı (analiz açık/kapalı fark etmeksizin)
     newCount++;
+
+    // Görsel analiz KAPALIYSA (saf-metin mod) Vision çağrısı yapma
+    if (!analyzeImages) continue;
+
     const analysis = await analyzeProductImage(product).catch(() => null);
     if (analysis) {
       product.visualAnalysis = analysis;
@@ -236,7 +264,7 @@ export function matchProduct(
 
 // ─── Sitemap ──────────────────────────────────────────────────────────────────
 
-async function fetchProductSitemap(origin: string): Promise<SitemapEntry[]> {
+async function fetchProductSitemap(origin: string, withImages: boolean): Promise<SitemapEntry[]> {
   // Önce doğrudan products.xml dene (ikas/Shopify standardı)
   let xml = await fetchText(`${origin}/products.xml`);
 
@@ -255,7 +283,10 @@ async function fetchProductSitemap(origin: string): Promise<SitemapEntry[]> {
   for (const block of blocks) {
     const loc = block.match(/<loc>([^<]+)<\/loc>/)?.[1]?.trim();
     if (!loc) continue;
-    const img = block.match(/<image:loc>([^<]+)<\/image:loc>/)?.[1]?.trim() ?? null;
+    // Saf-metin modda görsel linkleri okunmaz
+    const img = withImages
+      ? (block.match(/<image:loc>([^<]+)<\/image:loc>/)?.[1]?.trim() ?? null)
+      : null;
     entries.push({ url: loc, imageUrl: img });
   }
   return entries;
@@ -263,7 +294,7 @@ async function fetchProductSitemap(origin: string): Promise<SitemapEntry[]> {
 
 // ─── Ürün Detayı (JSON-LD) ────────────────────────────────────────────────────
 
-async function fetchProductInfo(entry: SitemapEntry): Promise<ProductInfo | null> {
+async function fetchProductInfo(entry: SitemapEntry, withImages: boolean): Promise<ProductInfo | null> {
   const html = await fetchText(entry.url);
 
   let name: string | null = null;
@@ -277,8 +308,11 @@ async function fetchProductInfo(entry: SitemapEntry): Promise<ProductInfo | null
     if (ld) {
       name        = typeof ld.name === "string" ? ld.name : null;
       description = typeof ld.description === "string" ? ld.description.slice(0, 300) : null;
-      imageUrls   = Array.isArray(ld.image) ? ld.image.filter((i: unknown) => typeof i === "string")
+      // Saf-metin modda JSON-LD görsel alanları okunmaz
+      if (withImages) {
+        imageUrls = Array.isArray(ld.image) ? ld.image.filter((i: unknown) => typeof i === "string")
                   : typeof ld.image === "string" ? [ld.image] : [];
+      }
       const offer = Array.isArray(ld.offers) ? ld.offers[0] : ld.offers;
       if (offer) {
         price    = offer.price != null ? String(offer.price) : null;
@@ -287,13 +321,13 @@ async function fetchProductInfo(entry: SitemapEntry): Promise<ProductInfo | null
     }
   }
 
-  // JSON-LD yoksa slug'dan isim türet, sitemap görselini kullan
+  // JSON-LD yoksa slug'dan isim türet
   if (!name) {
     const slug = new URL(entry.url).pathname.split("/").filter(Boolean).pop() ?? "";
     if (!slug) return null;
     name = slug.replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase());
   }
-  if (imageUrls.length === 0 && entry.imageUrl) imageUrls = [entry.imageUrl];
+  if (withImages && imageUrls.length === 0 && entry.imageUrl) imageUrls = [entry.imageUrl];
 
   return {
     name,
@@ -301,7 +335,7 @@ async function fetchProductInfo(entry: SitemapEntry): Promise<ProductInfo | null
     price,
     currency,
     url: entry.url,
-    imageUrl: imageUrls[0] ?? entry.imageUrl,
+    imageUrl: withImages ? (imageUrls[0] ?? entry.imageUrl) : null,
     imageUrls,
     localImagePath: null,
   };

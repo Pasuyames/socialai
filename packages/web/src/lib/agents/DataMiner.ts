@@ -25,22 +25,20 @@ export class DataMinerAgent {
       }
 
       // Yapılandırılmış ürün kataloğu (sitemap + JSON-LD) — keyword tahmininden
-      // çok daha güvenilir. E-ticaret sitelerinde isim/fiyat/paket görseli getirir.
-      const fresh = await scrapeProductCatalog(url).catch(() => [] as ProductInfo[]);
-      let imgCount = 0, analyzedCount = 0;
+      // çok daha güvenilir. SAF METİN modu: maliyet/kota koruması için görsel
+      // indirme ve Gemini Vision analizi devre dışı (yalnızca isim/fiyat/açıklama).
+      const fresh = await scrapeProductCatalog(url, { images: false }).catch(() => [] as ProductInfo[]);
       if (fresh.length > 0) {
-        // Mevcut (daha önce analiz edilmiş) katalogu koru, yeni ürünleri görsel analiz et
+        // Mevcut (daha önce analiz edilmiş) katalogu koru; YENİ ürünlerde Vision yok
         const existingCatalog = await this.loadExistingCatalog(brandId);
-        const { catalog, analyzedCount: analyzed } = await curateCatalog(
-          fresh, existingCatalog, (m) => this.log(brandId, m),
+        const { catalog } = await curateCatalog(
+          fresh, existingCatalog, (m) => this.log(brandId, m), { analyzeImages: false },
         );
         scraped.productCatalog = catalog;
         scraped.products = catalog.map(p =>
           p.price ? `${p.name} — ${p.price} ${p.currency ?? ""}`.trim() : p.name,
         );
         scraped.catalogSyncedAt = new Date().toISOString();
-        imgCount = catalog.filter(p => p.localImagePath).length;
-        analyzedCount = analyzed;
       }
 
       await prisma.brand.update({
@@ -51,7 +49,7 @@ export class DataMinerAgent {
       await this.log(
         brandId,
         `Başarılı: ${scraped.pages.length} sayfa tarandı. ` +
-        `${scraped.products?.length ?? 0} ürün (${imgCount} paket görseli indirildi, ${analyzedCount} görsel analiz edildi), ` +
+        `${scraped.products?.length ?? 0} ürün (saf metin — görsel modülü devre dışı), ` +
         `${scraped.socialLinks.length} sosyal link bulundu.`
       );
       return true;
