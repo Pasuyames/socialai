@@ -7,8 +7,13 @@ import crypto from "crypto";
 import { POST_STATUS, PLATFORM } from "../constants";
 
 const IMAGEN_MODEL = "imagen-3.0-generate-001";
-// Referans-görsel destekleyen model: gerçek ürün paketini sahneye render eder
-const GEMINI_IMAGE_MODEL = "gemini-2.5-flash-image";
+
+// ─── Görsel Üretim Sağlayıcı Yapılandırması ──────────────────────────────────
+// AI Studio anahtarı (GEMINI_API_KEY) varsa onu kullan; yoksa Vertex'e düş.
+// Seçili model: Nano Banana 2 (gemini-3.1-flash-image), 2K çözünürlük.
+const IMAGE_API_KEY     = process.env.GEMINI_API_KEY;                              // AI Studio anahtarı
+const GEMINI_IMAGE_MODEL = process.env.IMAGE_MODEL || "gemini-3.1-flash-image";    // Nano Banana 2
+const IMAGE_SIZE        = process.env.IMAGE_SIZE  || "2K";                         // 1K | 2K | 4K
 
 // Imagen 3 desteklediği oranlar: 1:1, 9:16, 16:9, 3:4, 4:3, 4:5
 const FEED_RATIO: Record<string, string> = {
@@ -40,11 +45,16 @@ export class ImageGeneratorAgent {
       const uploadDir = path.join(process.cwd(), "public", "uploads");
       await fs.promises.mkdir(uploadDir, { recursive: true });
 
-      const project  = process.env.GCP_PROJECT_ID;
-      const location = process.env.GCP_LOCATION || "us-central1";
-      if (!project) throw new Error("GCP_PROJECT_ID env değişkeni eksik.");
-
-      const ai = new GoogleGenAI({ vertexai: true, project, location });
+      // AI Studio anahtarı varsa onu kullan (Nano Banana 2 erişimi); yoksa Vertex
+      let ai: GoogleGenAI;
+      if (IMAGE_API_KEY) {
+        ai = new GoogleGenAI({ apiKey: IMAGE_API_KEY });
+      } else {
+        const project  = process.env.GCP_PROJECT_ID;
+        const location = process.env.GCP_LOCATION || "us-central1";
+        if (!project) throw new Error("GCP_PROJECT_ID veya GEMINI_API_KEY env değişkeni gerekli.");
+        ai = new GoogleGenAI({ vertexai: true, project, location });
+      }
 
       // ─── ÜRÜN MODU: Gerçek paketi REFERANS verip sahneye render ettir ───────
       // Gemini 2.5 Flash Image gerçek paket görselini görerek sahneye yerleştirir.
@@ -92,18 +102,16 @@ export class ImageGeneratorAgent {
         await this.log(postId, `UYARI: Ürün görseli bulunamadı (${post.productImagePath}) — Imagen'e düşülüyor.`);
       }
 
-      // ─── STANDART MOD: Imagen ile sahne üret ────────────────────────────────
-      if (!post.imagePrompt) throw new Error("Imagen için görsel prompt yok.");
+      // ─── STANDART MOD: Nano Banana 2 (metin→görsel, 2K) ile sahne üret ──────
+      if (!post.imagePrompt) throw new Error("Görsel prompt yok.");
 
-      await this.log(postId, "Imagen 3 ile görsel üretimi başlatıldı...");
+      await this.log(postId, `${GEMINI_IMAGE_MODEL} (${IMAGE_SIZE}) ile görsel üretimi başlatıldı...`);
 
-      const feedRatio = FEED_RATIO[platform] ?? "3:4";
-
-      const feedPath = await this.generate(ai, post.imagePrompt, post.negativePrompt ?? undefined, feedRatio, uploadDir);
+      const feedPath = await this.generateTextToImage(ai, post.imagePrompt, FEED_SIZE, "vertical 3:4 feed", uploadDir);
 
       let storyPath: string | null = null;
       if (platform === PLATFORM.INSTAGRAM) {
-        storyPath = await this.generate(ai, post.imagePrompt, post.negativePrompt ?? undefined, "9:16", uploadDir);
+        storyPath = await this.generateTextToImage(ai, post.imagePrompt, STORY_SIZE, "vertical 9:16 story", uploadDir);
       }
 
       await prisma.post.update({
@@ -154,6 +162,7 @@ export class ImageGeneratorAgent {
           { text: instruction },
         ],
       }],
+      config: { responseModalities: ["IMAGE"], imageConfig: { imageSize: IMAGE_SIZE } },
     });
 
     const parts   = res.candidates?.[0]?.content?.parts ?? [];
@@ -167,6 +176,40 @@ export class ImageGeneratorAgent {
       .toBuffer();
 
     const name     = `product-${Date.now()}-${crypto.randomBytes(4).toString("hex")}.jpg`;
+    const filePath = path.join(uploadDir, name);
+    await fs.promises.writeFile(filePath, fitted);
+    return filePath;
+  }
+
+  // ─── Nano Banana 2 Metin→Görsel (2K) ──────────────────────────────────────
+  // Referans görsel olmadan, prompt'tan doğrudan 2K görsel üretir.
+
+  private async generateTextToImage(
+    ai: GoogleGenAI,
+    prompt: string,
+    size: { w: number; h: number },
+    orientationHint: string,
+    uploadDir: string,
+  ): Promise<string> {
+    const res: any = await ai.models.generateContent({
+      model: GEMINI_IMAGE_MODEL,
+      contents: [{
+        role: "user",
+        parts: [{ text: `${prompt}. ${orientationHint} composition, photorealistic, high detail. No text, no watermark.` }],
+      }],
+      config: { responseModalities: ["IMAGE"], imageConfig: { imageSize: IMAGE_SIZE } },
+    });
+
+    const parts   = res.candidates?.[0]?.content?.parts ?? [];
+    const imgPart = parts.find((p: any) => p.inlineData?.data);
+    if (!imgPart) throw new Error("Nano Banana 2 görsel döndürmedi.");
+
+    const fitted = await sharp(Buffer.from(imgPart.inlineData.data, "base64"))
+      .resize({ width: size.w, height: size.h, fit: "cover", position: "attention" })
+      .jpeg({ quality: 90 })
+      .toBuffer();
+
+    const name     = `scene-${Date.now()}-${crypto.randomBytes(4).toString("hex")}.jpg`;
     const filePath = path.join(uploadDir, name);
     await fs.promises.writeFile(filePath, fitted);
     return filePath;

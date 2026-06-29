@@ -173,6 +173,7 @@ model AgentLog {
   id         Int      @id @default(autoincrement())
   agentName  String
   action     String
+  status     String   @default("INFO") // SUCCESS | FAILED | NEEDS_HUMAN | INFO (SQLite enum desteklemez → String)
   targetType String   // Brand | Plan | Post
   targetId   Int
   details    String?  // JSON — hata detayı, skor, ret sebebi vb.
@@ -180,6 +181,7 @@ model AgentLog {
 
   @@index([targetId, targetType])
   @@index([createdAt])
+  @@index([status])
 }
 
 // ==================== DESTEK BİLETLERİ ====================

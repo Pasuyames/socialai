@@ -1,7 +1,24 @@
 import { PrismaClient } from '@prisma/client'
+import { deriveAgentLogStatus } from './agentLogStatus'
 
 const prismaClientSingleton = () => {
-  return new PrismaClient()
+  const base = new PrismaClient()
+  // Edge Runtime (NextAuth middleware) $extends'i desteklemez → orada düz client dön.
+  if (process.env.NEXT_RUNTIME === 'edge') return base
+  // Node tarafında: agentLog.create'de status vermezse action'dan otomatik türet.
+  return base.$extends({
+    query: {
+      agentLog: {
+        create({ args, query }) {
+          const data: any = args.data
+          if (data && (data.status === undefined || data.status === null)) {
+            data.status = deriveAgentLogStatus(data.action ?? '')
+          }
+          return query(args)
+        },
+      },
+    },
+  }) as unknown as PrismaClient
 }
 
 declare global {

@@ -8,29 +8,14 @@ export const dynamic = "force-dynamic";
 
 const PAGE_SIZE = 50;
 
-// AgentLog'da status alanı yok — durum action metninden türetilir.
-// Filtre için: agent'ların ürettiği gerçek metin işaretçileri (OR contains).
-const STATUS_FILTERS: Record<string, string[]> = {
-  failed:      ["BAŞARISIZ", "HATA", "DURDURULDU", "edilemedi", "reddedildi"],
-  needs_human: ["KRİTİK", "müdahale", "needs_human"],
-  success:     ["tamamlandı", "hazır", "üretildi", "Başarılı", "geçti", "eşleşti", "onaylandı"],
+// Durum artık AgentLog.status kolonundan geliyor (metin türetme yok).
+// Geçerli değerler: SUCCESS | FAILED | NEEDS_HUMAN | INFO
+const STATUS_BADGE: Record<string, { label: string; cls: string; Icon: typeof XCircle }> = {
+  FAILED:      { label: "Başarısız",     cls: "bg-red-500/15 text-red-400 border-red-500/30",       Icon: XCircle },
+  NEEDS_HUMAN: { label: "İnsan Gerekli", cls: "bg-amber-500/15 text-amber-400 border-amber-500/30", Icon: AlertTriangle },
+  SUCCESS:     { label: "Başarılı",      cls: "bg-green-500/15 text-green-400 border-green-500/30", Icon: CheckCircle2 },
+  INFO:        { label: "Bilgi",         cls: "bg-zinc-700/40 text-zinc-400 border-zinc-600/30",    Icon: Info },
 };
-
-// Bir log satırının durumunu metinden çıkar (badge için). Sıra önemli: önce failed.
-function deriveStatus(action: string): "failed" | "needs_human" | "success" | "info" {
-  const a = action.toLocaleLowerCase("tr-TR");
-  if (/başarısız|hata|durduruldu|edilemedi|reddedildi/.test(a)) return "failed";
-  if (/kritik|müdahale|needs_human/.test(a)) return "needs_human";
-  if (/tamamlandı|hazır|üretildi|başarılı|geçti|eşleşti|onaylandı/.test(a)) return "success";
-  return "info";
-}
-
-const STATUS_BADGE = {
-  failed:      { label: "Başarısız",     cls: "bg-red-500/15 text-red-400 border-red-500/30",     Icon: XCircle },
-  needs_human: { label: "İnsan Gerekli",  cls: "bg-amber-500/15 text-amber-400 border-amber-500/30", Icon: AlertTriangle },
-  success:     { label: "Başarılı",       cls: "bg-green-500/15 text-green-400 border-green-500/30", Icon: CheckCircle2 },
-  info:        { label: "Bilgi",          cls: "bg-zinc-700/40 text-zinc-400 border-zinc-600/30",   Icon: Info },
-} as const;
 
 type SP = Record<string, string | undefined>;
 
@@ -56,9 +41,8 @@ export default async function ActivityPage({ searchParams }: { searchParams: Pro
   const and: any[] = [];
   if (agent) and.push({ agentName: agent });
   if (q)     and.push({ action: { contains: q } });
-  if (status && STATUS_FILTERS[status]) {
-    and.push({ OR: STATUS_FILTERS[status].map((k) => ({ action: { contains: k } })) });
-  }
+  // Durum filtresi artık doğrudan kolon üzerinden (hızlı, index'li)
+  if (status && STATUS_BADGE[status]) and.push({ status });
   if (brandId && !isNaN(brandId)) {
     // Marka logları doğrudan (Brand) + plan/post id'leri üzerinden (Plan/Post)
     const [plans, posts] = await Promise.all([
@@ -143,9 +127,10 @@ export default async function ActivityPage({ searchParams }: { searchParams: Pro
           <select name="status" defaultValue={status}
             className="bg-[#111119] border border-[#26263A] rounded-md px-2.5 py-1.5 text-sm text-white min-w-[130px]">
             <option value="">Tümü</option>
-            <option value="failed">Başarısız</option>
-            <option value="needs_human">İnsan Gerekli</option>
-            <option value="success">Başarılı</option>
+            <option value="FAILED">Başarısız</option>
+            <option value="NEEDS_HUMAN">İnsan Gerekli</option>
+            <option value="SUCCESS">Başarılı</option>
+            <option value="INFO">Bilgi</option>
           </select>
         </label>
 
@@ -186,8 +171,7 @@ export default async function ActivityPage({ searchParams }: { searchParams: Pro
               <tr><td colSpan={5} className="px-4 py-10 text-center text-muted-foreground">Kayıt bulunamadı.</td></tr>
             )}
             {logs.map((log) => {
-              const st = deriveStatus(log.action);
-              const { label, cls, Icon } = STATUS_BADGE[st];
+              const { label, cls, Icon } = STATUS_BADGE[log.status] ?? STATUS_BADGE.INFO;
               return (
                 <tr key={log.id} className="border-b border-[#15151F] hover:bg-[#101019] transition-colors">
                   <td className="px-4 py-2.5 text-xs text-muted-foreground whitespace-nowrap">{fmt(log.createdAt)}</td>
