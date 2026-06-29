@@ -1,0 +1,38 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# SocialAI — Altyapı (Redis 7) Docker Compose
+#
+# BullMQ kuyruğunun ihtiyaç duyduğu Redis 7'yi 7/24 kalıcı servis olarak çalıştırır
+# (Windows native redis-server 3.0.504 BullMQ ile UYUMSUZ; Redis 5+ şarttır).
+#
+#   docker compose up -d            → Redis'i arka planda başlat
+#   docker compose ps               → durum
+#   docker compose logs -f redis    → loglar
+#   docker compose down             → durdur
+#
+# web + worker süreçleri PM2 ile yönetilir (ecosystem.config.js); bunlar host'taki
+# tek pnpm node_modules + paylaşılan SQLite (dev.db) ve public/uploads dosya sistemine
+# eriştiği için PM2 bu mimaride container'lı izolasyondan daha pratiktir.
+# İsteğe bağlı tam-container kurulum için DEPLOYMENT.md'deki nota bakın.
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: socialai-redis
+    restart: unless-stopped
+    # Host 6380 → konteyner 6379 (web/worker .env: REDIS_PORT=6380)
+    ports:
+      - "6380:6379"
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "noeviction"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+volumes:
+  redis-data:
+    name: socialai-redis-data

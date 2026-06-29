@@ -5,7 +5,25 @@
     "dev:web": "pnpm --filter web dev",
     "dev:worker": "pnpm --filter worker dev",
     "build": "pnpm --filter '*' build",
-    "generate": "pnpm --filter worker generate"
+    "generate": "pnpm --filter worker generate",
+
+    "build:web": "pnpm --filter web build",
+    "prisma:push": "pnpm --filter worker exec prisma db push --schema=../web/prisma/schema.prisma",
+    "start:web": "pnpm --filter web start",
+    "start:worker": "pnpm --filter worker start",
+
+    "redis:up": "docker compose up -d",
+    "redis:down": "docker compose down",
+
+    "pm2:start": "pm2 start ecosystem.config.js --env production",
+    "pm2:stop": "pm2 stop ecosystem.config.js",
+    "pm2:restart": "pm2 restart ecosystem.config.js",
+    "pm2:reload": "pm2 reload ecosystem.config.js",
+    "pm2:logs": "pm2 logs",
+    "pm2:status": "pm2 status",
+    "pm2:save": "pm2 save",
+
+    "deploy": "pnpm install --frozen-lockfile && pnpm redis:up && pnpm generate && pnpm prisma:push && pnpm build:web && pnpm pm2:start && pm2 save"
   },
   "pnpm": {
     "overrides": {
