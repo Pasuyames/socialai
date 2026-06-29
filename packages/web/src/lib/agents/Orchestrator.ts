@@ -30,34 +30,6 @@ async function pmLog(targetType: "Brand" | "Plan" | "Post", targetId: number, ac
     .catch(() => {});
 }
 
-// Paralel işlem için concurrency limiti
-async function runWithConcurrency<T>(
-  items: T[],
-  limit: number,
-  fn: (item: T) => Promise<void>,
-): Promise<void> {
-  const queue = [...items];
-  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
-    while (queue.length > 0) {
-      const item = queue.shift();
-      if (item !== undefined) await fn(item);
-    }
-  });
-  await Promise.all(workers);
-}
-
-// Belirli sürede tamamlanmazsa timeout hatası fırlatır — timer leak korumalı
-function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
-  let timer: ReturnType<typeof setTimeout>;
-  const timeoutPromise = new Promise<T>((_, reject) => {
-    timer = setTimeout(
-      () => reject(new Error(`[Timeout] ${label} ${(ms / 60000).toFixed(0)} dakikada tamamlanamadı.`)),
-      ms,
-    );
-  });
-  return Promise.race([promise, timeoutPromise]).finally(() => clearTimeout(timer!));
-}
-
 // ─── Orchestrator ─────────────────────────────────────────────────────────────
 
 export class Orchestrator {
@@ -246,92 +218,42 @@ export class Orchestrator {
   static async processAllPostsInPlan(
     planId: number,
     opts: { skipImages?: boolean } = {},
-  ): Promise<{ success: boolean; processed: number; failed: number }> {
+  ): Promise<{ success: boolean; enqueued: number; jobIds: string[] }> {
     await prisma.monthlyPlan.update({ where: { id: planId }, data: { status: PLAN_STATUS.POST_GENERATION } });
-    await pmLog("Plan", planId, "Tüm gönderiler sıra ile üretiliyor...");
 
     const posts = await prisma.post.findMany({
       where: { planId, status: POST_STATUS.IDEATION },
       select: { id: true },
     });
-
-    let processed = 0, failed = 0;
-    const TEXT_TIMEOUT_MS = 5 * 60 * 1000; // 5 dakika / gönderi
-
-    // Sequential (1 paralel) — rate limit sorunlarını önle
-    await runWithConcurrency(posts, 1, async ({ id }) => {
-      await new Promise(r => setTimeout(r, 1000)); // 1s delay between posts
-      try {
-        const result = await withTimeout(
-          Orchestrator.startPostCreation(id),
-          TEXT_TIMEOUT_MS,
-          `Post#${id} metin üretimi`
-        );
-        if (result.success) processed++;
-        else {
-          failed++;
-          await prisma.post.update({
-            where: { id },
-            data: { status: POST_STATUS.NEEDS_HUMAN },
-          }).catch(() => {});
-        }
-      } catch (err: any) {
-        failed++;
-        await pmLog("Post", id, `HATA (izole): ${err.message}`);
-        await prisma.post.update({
-          where: { id },
-          data: { status: POST_STATUS.NEEDS_HUMAN },
-        }).catch(() => {});
-      }
-    });
-
-    await pmLog("Plan", planId, `Metin üretimi: ${processed} başarılı, ${failed} başarısız.`);
-
-    // Görsel üretim aşaması — skipImages ile atlanabilir (maliyet/kota koruması;
-    // yalnızca metin pipeline'ını stres-test etmek veya görselsiz modda çalışmak için).
-    if (opts.skipImages) {
-      await pmLog("Plan", planId, "Görsel üretim aşaması ATLANDI (skipImages).");
-      await prisma.monthlyPlan.update({ where: { id: planId }, data: { status: PLAN_STATUS.REVIEW } });
-      new ArchivistAgent().execute(planId).catch(() => {});
-      return { success: true, processed, failed };
+    if (posts.length === 0) {
+      await pmLog("Plan", planId, "Kuyruğa eklenecek gönderi yok (IDEATION boş).");
+      return { success: true, enqueued: 0, jobIds: [] };
     }
 
-    await prisma.monthlyPlan.update({ where: { id: planId }, data: { status: PLAN_STATUS.IMAGE_GENERATION } });
+    // Tüm gönderileri BullMQ kuyruğuna ekle (in-process sıralı çalıştırma yerine).
+    // Concurrency & rate-limit WORKER tarafında yönetilir; ayrıca attempts+backoff
+    // ile geçici hatalar (429 vb.) kuyruk seviyesinde de telafi edilir. İşler
+    // Bull-Board panelinden (/admin/queues) canlı izlenebilir.
+    const { agentQueue } = await import("../queues");
+    const { JOB_NAMES }  = await import("@socialai/common");
+    const skipImages = opts.skipImages ?? false;
 
-    const imagePosts = await prisma.post.findMany({
-      where: { planId, status: POST_STATUS.IMAGE_PROMPT_READY },
-      select: { id: true },
-    });
+    const jobs = await agentQueue.addBulk(
+      posts.map((p) => ({
+        name: JOB_NAMES.PROCESS_POST,
+        data: { postId: p.id, planId, skipImages },
+        opts: {
+          attempts: 2,
+          backoff: { type: "exponential" as const, delay: 5000 },
+          removeOnComplete: false, // panelde görünür kalsın (gözlemlenebilirlik)
+          removeOnFail: false,
+        },
+      })),
+    );
 
-    const IMAGE_TIMEOUT_MS = 10 * 60 * 1000; // 10 dakika / görsel (3 deneme * 3dk)
-    let imgProcessed = 0, imgFailed = 0;
-    await runWithConcurrency(imagePosts, 1, async ({ id }) => {
-      await new Promise(r => setTimeout(r, 2000)); // 2s delay between images
-      try {
-        const result = await withTimeout(
-          Orchestrator.startImageGenerationWithRetry(id),
-          IMAGE_TIMEOUT_MS,
-          `Post#${id} görsel üretimi`
-        );
-        if (result.success) imgProcessed++;
-        else imgFailed++;
-      } catch (err: any) {
-        imgFailed++;
-        await pmLog("Post", id, `GÖRSEL HATA (izole): ${err.message}`);
-        await prisma.post.update({
-          where: { id },
-          data: { status: POST_STATUS.NEEDS_HUMAN },
-        }).catch(() => {});
-      }
-    });
-
-    await pmLog("Plan", planId, `Görsel üretim: ${imgProcessed} başarılı, ${imgFailed} başarısız.`);
-    await prisma.monthlyPlan.update({ where: { id: planId }, data: { status: PLAN_STATUS.REVIEW } });
-
-    // Archivist — arka planda çalışır, engelleyici değil
-    new ArchivistAgent().execute(planId).catch(() => {});
-
-    return { success: true, processed: processed + imgProcessed, failed: failed + imgFailed };
+    const jobIds = jobs.map((j) => String(j.id));
+    await pmLog("Plan", planId, `${jobs.length} gönderi BullMQ kuyruğuna eklendi — worker eritince işlenecek.`);
+    return { success: true, enqueued: jobs.length, jobIds };
   }
 
   // ─── 6. Rapor Üret ────────────────────────────────────────────────────────

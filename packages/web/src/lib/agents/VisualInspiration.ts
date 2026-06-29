@@ -5,20 +5,34 @@ const AGENT_NAME = "Visual Inspiration (Görsel İlham Uzmanı)";
 
 // ─── Scraper Yardımcısı ───────────────────────────────────────────────────────
 
+// Firecrawl scrape için üst sınır — kuyruğu/pipeline'ı tıkamamak adına bu süreyi
+// aşan çağrı iptal edilir (env SCRAPE_TIMEOUT_MS ile ayarlanabilir).
+const SCRAPE_TIMEOUT_MS = parseInt(process.env.SCRAPE_TIMEOUT_MS ?? "8000", 10);
+
 async function scrapeImages(url: string, extractPrompt: string, count: number): Promise<string[]> {
+  // Firecrawl anahtarı yoksa AĞA HİÇ ÇIKMA — boş bekleme süresini sıfırla.
+  const apiKey = process.env.FIRE_CRAWL_API_KEY;
+  if (!apiKey) return [];
+
   try {
     const FirecrawlApp = (await import("@mendable/firecrawl-js")).default;
-    const app = new FirecrawlApp({ apiKey: process.env.FIRE_CRAWL_API_KEY });
-    const result = await (app as any).scrape(url, {
-      formats: ["extract"],
-      extract: {
-        prompt: extractPrompt,
-        schema: {
-          type: "object",
-          properties: { imageUrls: { type: "array", items: { type: "string" } } },
+    const app = new FirecrawlApp({ apiKey });
+    // scrape'i timeout ile yarıştır — askıda kalıp worker'ı bloklamasın.
+    const result: any = await Promise.race([
+      (app as any).scrape(url, {
+        formats: ["extract"],
+        extract: {
+          prompt: extractPrompt,
+          schema: {
+            type: "object",
+            properties: { imageUrls: { type: "array", items: { type: "string" } } },
+          },
         },
-      },
-    });
+      }),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("scrape timeout")), SCRAPE_TIMEOUT_MS),
+      ),
+    ]);
     const urls: string[] = result?.extract?.imageUrls ?? [];
     return urls.filter((u) => u.startsWith("http")).slice(0, count);
   } catch (e: any) {
@@ -74,6 +88,14 @@ Türkçe, kısa ve net yanıt ver.`;
 export class VisualInspirationAgent {
   async execute(postId: number): Promise<boolean> {
     try {
+      // Opsiyonel kapatma: görsel ilham bloklayıcı değildir; toplu üretimde
+      // kuyruğu gereksiz tıkamaması için tamamen atlanabilir. Firecrawl anahtarı
+      // yoksa da zaten anlamsız olduğundan atla (boş bekleme yok).
+      if (process.env.VISUAL_INSPIRATION_ENABLED === "false" || !process.env.FIRE_CRAWL_API_KEY) {
+        await this.log(postId, "Görsel ilham atlandı (devre dışı / Firecrawl anahtarı yok).");
+        return true;
+      }
+
       const post = await prisma.post.findUnique({
         where: { id: postId },
         include: { plan: { include: { brand: true } } },
