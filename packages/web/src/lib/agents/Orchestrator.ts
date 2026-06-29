@@ -243,7 +243,10 @@ export class Orchestrator {
 
   // ─── 5. Tüm Plandaki Gönderileri Toplu İşle ──────────────────────────────
 
-  static async processAllPostsInPlan(planId: number): Promise<{ success: boolean; processed: number; failed: number }> {
+  static async processAllPostsInPlan(
+    planId: number,
+    opts: { skipImages?: boolean } = {},
+  ): Promise<{ success: boolean; processed: number; failed: number }> {
     await prisma.monthlyPlan.update({ where: { id: planId }, data: { status: PLAN_STATUS.POST_GENERATION } });
     await pmLog("Plan", planId, "Tüm gönderiler sıra ile üretiliyor...");
 
@@ -284,7 +287,15 @@ export class Orchestrator {
 
     await pmLog("Plan", planId, `Metin üretimi: ${processed} başarılı, ${failed} başarısız.`);
 
-    // Görsel üretim aşaması
+    // Görsel üretim aşaması — skipImages ile atlanabilir (maliyet/kota koruması;
+    // yalnızca metin pipeline'ını stres-test etmek veya görselsiz modda çalışmak için).
+    if (opts.skipImages) {
+      await pmLog("Plan", planId, "Görsel üretim aşaması ATLANDI (skipImages).");
+      await prisma.monthlyPlan.update({ where: { id: planId }, data: { status: PLAN_STATUS.REVIEW } });
+      new ArchivistAgent().execute(planId).catch(() => {});
+      return { success: true, processed, failed };
+    }
+
     await prisma.monthlyPlan.update({ where: { id: planId }, data: { status: PLAN_STATUS.IMAGE_GENERATION } });
 
     const imagePosts = await prisma.post.findMany({
