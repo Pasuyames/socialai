@@ -20,6 +20,18 @@ const IMAGE_SIZE         = process.env.IMAGE_SIZE  || "2K";                     
 const FEED_SIZE  = { w: 1080, h: 1350 }; // 4:5
 const STORY_SIZE = { w: 1080, h: 1920 }; // 9:16
 
+// ─── Web public kök dizini ───────────────────────────────────────────────────
+// Üretilen görseller web'in serve ettiği public/ altına yazılmalı. Next.js bunu
+// process.cwd()/public'te bulur; ANCAK görsel üretimi worker process'inden de
+// (farklı cwd: packages/worker) tetiklenebilir. O yüzden PUBLIC_DIR env'i öncelikli
+// kullanılır → görseller her zaman web'in public/'ine düşer, URL'ler (/uploads/...)
+// her iki bağlamda da tutarlı kalır.
+function publicDir(): string {
+  return process.env.PUBLIC_DIR
+    ? path.resolve(process.env.PUBLIC_DIR)
+    : path.join(process.cwd(), "public");
+}
+
 export class ImageGeneratorAgent {
   private agentName = "Image Generator (Görsel Üretici — Nano Banana 2)";
 
@@ -36,7 +48,8 @@ export class ImageGeneratorAgent {
       }
 
       const platform  = post.platform ?? PLATFORM.INSTAGRAM;
-      const uploadDir = path.join(process.cwd(), "public", "uploads");
+      const root      = publicDir();
+      const uploadDir = path.join(root, "uploads");
       await fs.promises.mkdir(uploadDir, { recursive: true });
 
       const ai = this.makeClient();
@@ -44,7 +57,7 @@ export class ImageGeneratorAgent {
       // ── 1) FEED görseli (tam 4:5) üret ────────────────────────────────────
       let feedPath: string;
       const productAbs = post.productImagePath
-        ? path.join(process.cwd(), "public", post.productImagePath.replace(/^\//, ""))
+        ? path.join(root, post.productImagePath.replace(/^\//, ""))
         : null;
 
       if (productAbs && fs.existsSync(productAbs)) {
