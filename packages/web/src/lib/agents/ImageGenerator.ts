@@ -9,16 +9,19 @@ import { POST_STATUS, PLATFORM } from "../constants";
 // ─── Görsel Üretim Sağlayıcı Yapılandırması ──────────────────────────────────
 // AI Studio anahtarı (GEMINI_API_KEY) varsa onu kullan; yoksa Vertex'e düş.
 // Seçili model: Nano Banana 2 (gemini-3.1-flash-image), 2K çözünürlük.
-const IMAGE_API_KEY     = process.env.GEMINI_API_KEY;                              // AI Studio anahtarı
-const GEMINI_IMAGE_MODEL = process.env.IMAGE_MODEL || "gemini-3.1-flash-image";    // Nano Banana 2
-const IMAGE_SIZE        = process.env.IMAGE_SIZE  || "2K";                         // 1K | 2K | 4K
+const IMAGE_API_KEY      = process.env.GEMINI_API_KEY;                            // AI Studio anahtarı
+const GEMINI_IMAGE_MODEL = process.env.IMAGE_MODEL || "gemini-3.1-flash-image";   // Nano Banana 2
+const IMAGE_SIZE         = process.env.IMAGE_SIZE  || "2K";                       // 1K | 2K | 4K
 
-// Compositing tuval boyutları (px)
-const FEED_SIZE  = { w: 1080, h: 1440 }; // 3:4
+// ─── Çıktı tuval boyutları (px) ──────────────────────────────────────────────
+// Feed: tam olarak 4:5 (Instagram portre). Story: 9:16.
+// KURAL: Story için ASLA yeni AI üretimi yapılmaz — 4:5 feed görseli kaynak alınıp
+// sharp ile (bulanık arka plan genişletme + compositing) 9:16'ya uyarlanır.
+const FEED_SIZE  = { w: 1080, h: 1350 }; // 4:5
 const STORY_SIZE = { w: 1080, h: 1920 }; // 9:16
 
 export class ImageGeneratorAgent {
-  private agentName = "Image Generator (Görsel Üretici — Imagen 3)";
+  private agentName = "Image Generator (Görsel Üretici — Nano Banana 2)";
 
   async execute(postId: number): Promise<boolean> {
     try {
@@ -36,75 +39,43 @@ export class ImageGeneratorAgent {
       const uploadDir = path.join(process.cwd(), "public", "uploads");
       await fs.promises.mkdir(uploadDir, { recursive: true });
 
-      // AI Studio anahtarı varsa onu kullan (Nano Banana 2 erişimi); yoksa Vertex
-      let ai: GoogleGenAI;
-      if (IMAGE_API_KEY) {
-        ai = new GoogleGenAI({ apiKey: IMAGE_API_KEY });
-      } else {
-        const project  = process.env.GCP_PROJECT_ID;
-        const location = process.env.GCP_LOCATION || "us-central1";
-        if (!project) throw new Error("GCP_PROJECT_ID veya GEMINI_API_KEY env değişkeni gerekli.");
-        ai = new GoogleGenAI({ vertexai: true, project, location });
-      }
+      const ai = this.makeClient();
 
-      // ─── ÜRÜN MODU: Gerçek paketi REFERANS verip sahneye render ettir ───────
-      // Gemini 2.5 Flash Image gerçek paket görselini görerek sahneye yerleştirir.
-      // Başarısız olursa sharp compositing'e (gradient kart) düşer — yine gerçek ürün.
-      if (post.productImagePath) {
-        const productAbs = path.join(process.cwd(), "public", post.productImagePath.replace(/^\//, ""));
-        if (fs.existsSync(productAbs)) {
-          const scene = post.imagePrompt ?? "professional lifestyle product photography, soft natural light, rustic surface";
-          try {
-            await this.log(postId, "Gemini 2.5 Flash Image ile ürün referanslı sahne üretiliyor...");
-            const feedPath  = await this.generateWithProductReference(ai, productAbs, scene, FEED_SIZE,  "vertical 3:4 feed", uploadDir);
-            const storyPath = platform === PLATFORM.INSTAGRAM
-              ? await this.generateWithProductReference(ai, productAbs, scene, STORY_SIZE, "vertical 9:16 story", uploadDir)
-              : null;
+      // ── 1) FEED görseli (tam 4:5) üret ────────────────────────────────────
+      let feedPath: string;
+      const productAbs = post.productImagePath
+        ? path.join(process.cwd(), "public", post.productImagePath.replace(/^\//, ""))
+        : null;
 
-            await prisma.post.update({
-              where: { id: postId },
-              data: {
-                imagePath:      `/uploads/${path.basename(feedPath)}`,
-                storyImagePath: storyPath ? `/uploads/${path.basename(storyPath)}` : null,
-                status:         POST_STATUS.QC_REVIEW,
-              },
-            });
-            await this.log(postId, `Ürün referanslı görsel üretildi (Gemini). Feed: ${path.basename(feedPath)}${storyPath ? ` | Story: ${path.basename(storyPath)}` : ""}`);
-            return true;
-          } catch (refErr: any) {
-            await this.log(postId, `Gemini referanslı üretim başarısız (${refErr.message?.slice(0, 80)}) — compositing'e düşülüyor.`);
-            const colors = this.brandTints(post.plan.brand.visualIdentity);
-            const feedPath  = await this.composeProductCard(productAbs, FEED_SIZE, colors, uploadDir);
-            const storyPath = platform === PLATFORM.INSTAGRAM
-              ? await this.composeProductCard(productAbs, STORY_SIZE, colors, uploadDir)
-              : null;
-            await prisma.post.update({
-              where: { id: postId },
-              data: {
-                imagePath:      `/uploads/${path.basename(feedPath)}`,
-                storyImagePath: storyPath ? `/uploads/${path.basename(storyPath)}` : null,
-                status:         POST_STATUS.QC_REVIEW,
-              },
-            });
-            await this.log(postId, `Gerçek ürün paketi yerleştirildi (compositing fallback).`);
-            return true;
-          }
+      if (productAbs && fs.existsSync(productAbs)) {
+        // ÜRÜN MODU: gerçek paketi REFERANS verip sahneye render ettir.
+        // Referanslı üretim başarısız olursa sharp compositing'e (gradient kart) düşer.
+        const scene = post.imagePrompt ?? "professional lifestyle product photography, soft natural light, rustic surface";
+        try {
+          await this.log(postId, `${GEMINI_IMAGE_MODEL} ile ürün referanslı feed (4:5) üretiliyor...`);
+          feedPath = await this.generateWithProductReference(ai, productAbs, scene, uploadDir);
+        } catch (refErr: any) {
+          await this.log(postId, `Referanslı üretim başarısız (${refErr.message?.slice(0, 80)}) — compositing'e düşülüyor.`);
+          const colors = this.brandTints(post.plan.brand.visualIdentity);
+          feedPath = await this.composeProductCard(productAbs, FEED_SIZE, colors, uploadDir);
         }
-        await this.log(postId, `UYARI: Ürün görseli bulunamadı (${post.productImagePath}) — Imagen'e düşülüyor.`);
+      } else {
+        // STANDART MOD: Nano Banana 2 metin→görsel (4:5).
+        if (post.productImagePath) {
+          await this.log(postId, `UYARI: Ürün görseli bulunamadı (${post.productImagePath}) — metin→görsele düşülüyor.`);
+        }
+        if (!post.imagePrompt) throw new Error("Görsel prompt yok.");
+        await this.log(postId, `${GEMINI_IMAGE_MODEL} (${IMAGE_SIZE}) ile feed (4:5) üretiliyor...`);
+        feedPath = await this.generateTextToImage(ai, post.imagePrompt, uploadDir);
       }
 
-      // ─── STANDART MOD: Nano Banana 2 (metin→görsel, 2K) ile sahne üret ──────
-      if (!post.imagePrompt) throw new Error("Görsel prompt yok.");
-
-      await this.log(postId, `${GEMINI_IMAGE_MODEL} (${IMAGE_SIZE}) ile görsel üretimi başlatıldı...`);
-
-      const feedPath = await this.generateTextToImage(ai, post.imagePrompt, FEED_SIZE, "vertical 3:4 feed", uploadDir);
-
+      // ── 2) STORY (9:16): feed'i kaynak alıp sharp ile uyarla (yeni AI YOK) ──
       let storyPath: string | null = null;
       if (platform === PLATFORM.INSTAGRAM) {
-        storyPath = await this.generateTextToImage(ai, post.imagePrompt, STORY_SIZE, "vertical 9:16 story", uploadDir);
+        storyPath = await this.adaptFeedToStory(feedPath, uploadDir);
       }
 
+      // ── 3) Kaydet ──────────────────────────────────────────────────────────
       await prisma.post.update({
         where: { id: postId },
         data: {
@@ -114,7 +85,11 @@ export class ImageGeneratorAgent {
         },
       });
 
-      await this.log(postId, `Görsel üretildi. Feed: ${path.basename(feedPath)}${storyPath ? ` | Story: ${path.basename(storyPath)}` : ""}`);
+      await this.log(
+        postId,
+        `Görsel hazır. Feed 4:5: ${path.basename(feedPath)}` +
+          (storyPath ? ` | Story 9:16 (feed'den türetildi): ${path.basename(storyPath)}` : ""),
+      );
       return true;
 
     } catch (err: any) {
@@ -123,16 +98,22 @@ export class ImageGeneratorAgent {
     }
   }
 
-  // ─── Ürün Referanslı Üretim (Gemini 2.5 Flash Image) ──────────────────────
-  // Gerçek paket görselini referans verip sahneye fotorealistik render ettirir.
-  // Çıktı sonra hedef orana (sharp cover-fit) tam oturtulur.
+  // AI Studio anahtarı varsa onu kullan (Nano Banana 2 erişimi); yoksa Vertex'e düş.
+  private makeClient(): GoogleGenAI {
+    if (IMAGE_API_KEY) return new GoogleGenAI({ apiKey: IMAGE_API_KEY });
+    const project  = process.env.GCP_PROJECT_ID;
+    const location = process.env.GCP_LOCATION || "us-central1";
+    if (!project) throw new Error("GCP_PROJECT_ID veya GEMINI_API_KEY env değişkeni gerekli.");
+    return new GoogleGenAI({ vertexai: true, project, location });
+  }
 
+  // ─── Ürün Referanslı Üretim (Nano Banana 2) — feed 4:5 ────────────────────
+  // Gerçek paket görselini referans verip sahneye fotorealistik render ettirir.
+  // Çıktı 4:5 feed boyutuna (sharp cover-fit) tam oturtulur.
   private async generateWithProductReference(
     ai: GoogleGenAI,
     productAbs: string,
     scene: string,
-    size: { w: number; h: number },
-    orientationHint: string,
     uploadDir: string,
   ): Promise<string> {
     const bytes = await fs.promises.readFile(productAbs);
@@ -142,7 +123,7 @@ export class ImageGeneratorAgent {
     const instruction =
       `Use the provided product package as the EXACT hero product — preserve its packaging design, label, colors and text precisely (do not redesign or relabel it). ` +
       `Render a photorealistic, professional commercial lifestyle photograph placing this real product naturally into the following scene: ${scene}. ` +
-      `The product must be the clear focal point, well-lit and sharp. ${orientationHint} composition, appetizing and on-brand. No extra text, no watermark, no duplicate products.`;
+      `The product must be the clear focal point, well-lit and sharp. Vertical 4:5 feed composition, appetizing and on-brand. No extra text, no watermark, no duplicate products.`;
 
     const res: any = await ai.models.generateContent({
       model: GEMINI_IMAGE_MODEL,
@@ -158,35 +139,23 @@ export class ImageGeneratorAgent {
 
     const parts   = res.candidates?.[0]?.content?.parts ?? [];
     const imgPart = parts.find((p: any) => p.inlineData?.data);
-    if (!imgPart) throw new Error("Gemini görsel döndürmedi.");
+    if (!imgPart) throw new Error("Nano Banana 2 görsel döndürmedi.");
 
-    // Hedef orana tam oturt (cover-fit), JPEG kaydet
-    const fitted = await sharp(Buffer.from(imgPart.inlineData.data, "base64"))
-      .resize({ width: size.w, height: size.h, fit: "cover", position: "attention" })
-      .jpeg({ quality: 90 })
-      .toBuffer();
-
-    const name     = `product-${Date.now()}-${crypto.randomBytes(4).toString("hex")}.jpg`;
-    const filePath = path.join(uploadDir, name);
-    await fs.promises.writeFile(filePath, fitted);
-    return filePath;
+    return this.saveFitted(imgPart.inlineData.data, FEED_SIZE, "product", uploadDir);
   }
 
-  // ─── Nano Banana 2 Metin→Görsel (2K) ──────────────────────────────────────
-  // Referans görsel olmadan, prompt'tan doğrudan 2K görsel üretir.
-
+  // ─── Nano Banana 2 Metin→Görsel — feed 4:5 ────────────────────────────────
+  // Referans görsel olmadan, prompt'tan doğrudan 4:5 feed görseli üretir.
   private async generateTextToImage(
     ai: GoogleGenAI,
     prompt: string,
-    size: { w: number; h: number },
-    orientationHint: string,
     uploadDir: string,
   ): Promise<string> {
     const res: any = await ai.models.generateContent({
       model: GEMINI_IMAGE_MODEL,
       contents: [{
         role: "user",
-        parts: [{ text: `${prompt}. ${orientationHint} composition, photorealistic, high detail. No text, no watermark.` }],
+        parts: [{ text: `${prompt}. Vertical 4:5 feed composition, photorealistic, high detail. No text, no watermark.` }],
       }],
       config: { responseModalities: ["IMAGE"], imageConfig: { imageSize: IMAGE_SIZE } },
     });
@@ -195,14 +164,54 @@ export class ImageGeneratorAgent {
     const imgPart = parts.find((p: any) => p.inlineData?.data);
     if (!imgPart) throw new Error("Nano Banana 2 görsel döndürmedi.");
 
-    const fitted = await sharp(Buffer.from(imgPart.inlineData.data, "base64"))
+    return this.saveFitted(imgPart.inlineData.data, FEED_SIZE, "scene", uploadDir);
+  }
+
+  // base64 görseli hedef orana (cover-fit) oturtup JPEG olarak kaydeder.
+  private async saveFitted(
+    b64: string,
+    size: { w: number; h: number },
+    prefix: string,
+    uploadDir: string,
+  ): Promise<string> {
+    const fitted = await sharp(Buffer.from(b64, "base64"))
       .resize({ width: size.w, height: size.h, fit: "cover", position: "attention" })
       .jpeg({ quality: 90 })
       .toBuffer();
 
-    const name     = `scene-${Date.now()}-${crypto.randomBytes(4).toString("hex")}.jpg`;
+    const name     = `${prefix}-${Date.now()}-${crypto.randomBytes(4).toString("hex")}.jpg`;
     const filePath = path.join(uploadDir, name);
     await fs.promises.writeFile(filePath, fitted);
+    return filePath;
+  }
+
+  // ─── Story (9:16) — feed görselinden türetme (sharp, AI YOK) ──────────────
+  // 4:5 feed'i kaynak alır; arka planı feed'in bulanık-büyütülmüş kopyasıyla
+  // 9:16'ya genişletir, orijinal feed'i dikeyde ortaya net olarak yerleştirir.
+  private async adaptFeedToStory(feedPath: string, uploadDir: string): Promise<string> {
+    const { w, h } = STORY_SIZE; // 1080x1920
+    const feedBuf  = await fs.promises.readFile(feedPath);
+
+    // Arka plan: feed'i story tuvaline cover-fit + bulanıklaştır + hafif karart
+    const background = await sharp(feedBuf)
+      .resize({ width: w, height: h, fit: "cover", position: "attention" })
+      .blur(36)
+      .modulate({ brightness: 0.82 })
+      .toBuffer();
+
+    // Ön plan: orijinal feed tam genişlikte (1080) — 4:5 oranı korunur (1080x1350)
+    const foreground = await sharp(feedBuf).resize({ width: w }).toBuffer();
+    const fgMeta = await sharp(foreground).metadata();
+    const top    = Math.max(0, Math.round((h - (fgMeta.height ?? FEED_SIZE.h)) / 2));
+
+    const out = await sharp(background)
+      .composite([{ input: foreground, top, left: 0 }])
+      .jpeg({ quality: 90 })
+      .toBuffer();
+
+    const name     = `story-${Date.now()}-${crypto.randomBytes(4).toString("hex")}.jpg`;
+    const filePath = path.join(uploadDir, name);
+    await fs.promises.writeFile(filePath, out);
     return filePath;
   }
 
