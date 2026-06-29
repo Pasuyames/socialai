@@ -10,11 +10,33 @@ import { Langfuse } from "langfuse";
 //
 export type ModelTier = "fast" | "balanced" | "premium";
 
+/** Bir LLM çağrısının token kullanımı (Langfuse + maliyet takibi için) */
+export interface TokenUsage {
+  input: number;   // promptTokenCount
+  output: number;  // candidatesTokenCount
+  total: number;   // totalTokenCount
+}
+
 export interface LLMOptions {
   tier?: ModelTier;
   taskName?: string;
   /** Langfuse trace bağlamı — planId veya postId ile trace'leri gruplamak için */
   traceId?: string;
+  /**
+   * Gemini native structured output: yanıt MIME türü. JSON üretiminde
+   * "application/json" verilir → model markdown sarmalamadan saf JSON döndürür.
+   */
+  responseMimeType?: string;
+  /**
+   * Gemini native structured output şeması (Google/OpenAPI-subset formatı).
+   * Verilirse model çıktıyı bu şemaya UYMAYA zorlanır (responseMimeType ile birlikte).
+   */
+  responseSchema?: Record<string, unknown>;
+  /**
+   * Token kullanımı geri çağrısı — her başarılı üretimde çağrılır. Langfuse
+   * anahtarı olmasa bile maliyeti programatik izlemek/test etmek için.
+   */
+  onUsage?: (usage: TokenUsage) => void;
 }
 
 // ─── Model Haritası ───────────────────────────────────────────────────────────
@@ -53,6 +75,15 @@ function getLangfuse(): Langfuse | null {
     flushInterval: 5000,
   });
   return _langfuse;
+}
+
+/**
+ * Bekleyen Langfuse trace'lerini hemen gönderir. Kısa ömürlü script'ler,
+ * serverless fonksiyonlar ve graceful shutdown için ZORUNLU — aksi halde
+ * buffer'daki trace'ler (token kullanımı dahil) panele ulaşmadan süreç biter.
+ */
+export async function flushLangfuse(): Promise<void> {
+  await _langfuse?.flushAsync().catch(() => {});
 }
 
 // ─── Google GenAI Singleton ───────────────────────────────────────────────────
@@ -167,12 +198,32 @@ async function _attemptGenerate(
     });
 
     try {
+      // Gemini native structured output (responseMimeType / responseSchema).
+      // İkisi de yoksa config gönderme → eski davranış birebir korunur.
+      const config =
+        opts?.responseMimeType || opts?.responseSchema
+          ? {
+              ...(opts.responseMimeType ? { responseMimeType: opts.responseMimeType } : {}),
+              ...(opts.responseSchema ? { responseSchema: opts.responseSchema } : {}),
+            }
+          : undefined;
+
       const response = await getClient().models.generateContent({
         model: MODEL_IDS[tier],
         contents: prompt,
+        ...(config ? { config } : {}),
       });
 
       const text = response.text ?? "";
+
+      // Token kullanımı — Langfuse + onUsage callback (maliyet izleme)
+      const um: any = (response as any).usageMetadata ?? {};
+      const usage: TokenUsage = {
+        input:  um.promptTokenCount ?? 0,
+        output: um.candidatesTokenCount ?? 0,
+        total:  um.totalTokenCount ?? ((um.promptTokenCount ?? 0) + (um.candidatesTokenCount ?? 0)),
+      };
+
       if (!text) {
         lastError = new Error("Model boş yanıt döndürdü.");
         console.warn(`[LLM:${taskName}] Deneme ${attempt}: boş yanıt (${MODEL_IDS[tier]}).`);
@@ -181,7 +232,11 @@ async function _attemptGenerate(
       }
 
       const out = isJson ? stripMarkdown(text) : text;
-      generation?.end({ output: out.slice(0, 2000) });
+      generation?.end({
+        output: out.slice(0, 2000),
+        usage: { input: usage.input, output: usage.output, total: usage.total, unit: "TOKENS" },
+      });
+      if (usage.total > 0) opts?.onUsage?.(usage);
       return { ok: true, text: out };
 
     } catch (err: any) {
@@ -220,8 +275,16 @@ export async function generateJSON<T>(
 ): Promise<T> {
   const { taskName = "?" } = options;
 
-  // 1. Normal deneme
-  const raw1 = await generateText(prompt, { ...options, isJson: true });
+  // Native structured output'u varsayılan aç: model markdown sarmalamadan saf
+  // JSON döndürür. Çağıran responseMimeType vermişse ona saygı duy.
+  const jsonOptions: LLMOptions & { isJson?: boolean } = {
+    ...options,
+    isJson: true,
+    responseMimeType: options.responseMimeType ?? "application/json",
+  };
+
+  // 1. Normal deneme (native JSON modu)
+  const raw1 = await generateText(prompt, jsonOptions);
   const res1 = parseAndValidate(raw1, schema);
   if (res1.ok) return res1.data;
 
@@ -229,7 +292,7 @@ export async function generateJSON<T>(
     `[LLM:${taskName}] JSON parse/validasyon başarısız (deneme 1): ${res1.error}`
   );
 
-  // 2. Model zorunlu JSON modunda
+  // 2. Model zorunlu JSON modunda + ek metin talimatı
   const strictPrompt = `${prompt}
 
 KRİTİK KURAL: Yanıtın SADECE geçerli JSON olmalı.
@@ -237,7 +300,7 @@ KRİTİK KURAL: Yanıtın SADECE geçerli JSON olmalı.
 - İlk karakter { veya [ OLMAK ZORUNDA.
 - Son karakter } veya ] OLMAK ZORUNDA.`;
 
-  const raw2 = await generateText(strictPrompt, { ...options, isJson: true });
+  const raw2 = await generateText(strictPrompt, jsonOptions);
   const res2 = parseAndValidate(raw2, schema);
   if (res2.ok) return res2.data;
 
