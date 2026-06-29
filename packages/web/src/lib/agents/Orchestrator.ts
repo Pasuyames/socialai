@@ -7,9 +7,8 @@ import { DataAnalystV2Agent }        from "./DataAnalystV2";
 import { MarketingDirectorAgent }    from "./MarketingDirector";
 import { IdeationSpecialistAgent }   from "./IdeationSpecialist";
 import { ContentSchedulerAgent }     from "./ContentScheduler";
-import { CopywriterAgent }           from "./Copywriter";
+import { ContentWriterAgent }        from "./ContentWriter";
 import { EditorInChiefAgent }        from "./EditorInChief";
-import { EngagementSpecialistAgent } from "./EngagementSpecialist";
 import { PromptEngineerAgent }       from "./PromptEngineer";
 import { VisualInspirationAgent }    from "./VisualInspiration";
 import { ImageGeneratorAgent }       from "./ImageGenerator";
@@ -155,27 +154,25 @@ export class Orchestrator {
     try {
       await pmLog("Post", postId, "Gönderi üretim süreci başlatıldı.");
 
-      const copywriter   = new CopywriterAgent();
-      const editor       = new EditorInChiefAgent();
-      const engagement   = new EngagementSpecialistAgent();
-      const inspiration  = new VisualInspirationAgent();
-      const promptEng    = new PromptEngineerAgent();
+      // Birleşik içerik motoru: caption + hashtags + hook'u TEK structured JSON
+      // çağrısında üretir (eski Copywriter + EngagementSpecialist yerine).
+      const contentWriter = new ContentWriterAgent();
+      const editor        = new EditorInChiefAgent();
+      const inspiration   = new VisualInspirationAgent();
+      const promptEng     = new PromptEngineerAgent();
 
-      // Metin döngüsü: yaz → denetle → yeniden yaz (max 2 tekrar)
-      let copyOk = false;
+      // Metin döngüsü: üret → denetle → (gerekirse) revizyon notuyla yeniden üret
       for (let i = 0; i <= MAX_COPY_RETRIES; i++) {
-        copyOk = await copywriter.execute(postId);
-        if (!copyOk) throw new Error("Copywriter başarısız.");
+        const writeOk = await contentWriter.execute(postId);
+        if (!writeOk) throw new Error("ContentWriter başarısız.");
 
         const editorOk = await editor.execute(postId);
         if (!editorOk) throw new Error("EditorInChief başarısız.");
 
-        // EditorInChief NEEDS_REWRITE verdiyse tekrar dene
+        // EditorInChief NEEDS_REWRITE verdiyse (revisionNotes set eder) tekrar dene
         const refreshed = await prisma.post.findUnique({ where: { id: postId }, select: { status: true } });
-        if (refreshed?.status !== POST_STATUS.NEEDS_REWRITE) {
-          copyOk = true;
-          break;
-        }
+        if (refreshed?.status !== POST_STATUS.NEEDS_REWRITE) break;
+
         await pmLog("Post", postId, `Metin yeniden yazılıyor (deneme ${i + 2})...`);
       }
 
@@ -186,9 +183,9 @@ export class Orchestrator {
         throw new Error("Metin kalite eşiğini geçemedi, insan müdahalesi gerekiyor.");
       }
 
-      // Etkileşim Uzmanı
-      const engOk = await engagement.execute(postId);
-      if (!engOk) throw new Error("EngagementSpecialist başarısız.");
+      // Metin QA'yı geçti — hashtags/hook ContentWriter tarafından zaten yazıldı.
+      // Görsel aşamasına hazır işaretle (eski akışta EngagementSpecialist yapardı).
+      await prisma.post.update({ where: { id: postId }, data: { status: POST_STATUS.READY_FOR_IMAGE } });
 
       // Görsel İlham (bloklayıcı değil — başarısız olsa pipeline devam eder)
       await inspiration.execute(postId);
@@ -197,7 +194,7 @@ export class Orchestrator {
       const promptOk = await promptEng.execute(postId);
       if (!promptOk) throw new Error("PromptEngineer başarısız.");
 
-      await pmLog("Post", postId, "Gönderi metni ve görsel promptu tamamlandı.");
+      await pmLog("Post", postId, "Gönderi metni (caption+hashtags+hook) ve görsel promptu tamamlandı.");
       return { success: true };
 
     } catch (err: any) {
