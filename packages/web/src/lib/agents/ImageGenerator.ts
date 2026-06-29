@@ -6,21 +6,12 @@ import path from "path";
 import crypto from "crypto";
 import { POST_STATUS, PLATFORM } from "../constants";
 
-const IMAGEN_MODEL = "imagen-3.0-generate-001";
-
 // ─── Görsel Üretim Sağlayıcı Yapılandırması ──────────────────────────────────
 // AI Studio anahtarı (GEMINI_API_KEY) varsa onu kullan; yoksa Vertex'e düş.
 // Seçili model: Nano Banana 2 (gemini-3.1-flash-image), 2K çözünürlük.
 const IMAGE_API_KEY     = process.env.GEMINI_API_KEY;                              // AI Studio anahtarı
 const GEMINI_IMAGE_MODEL = process.env.IMAGE_MODEL || "gemini-3.1-flash-image";    // Nano Banana 2
 const IMAGE_SIZE        = process.env.IMAGE_SIZE  || "2K";                         // 1K | 2K | 4K
-
-// Imagen 3 desteklediği oranlar: 1:1, 9:16, 16:9, 3:4, 4:3, 4:5
-const FEED_RATIO: Record<string, string> = {
-  [PLATFORM.INSTAGRAM]: "3:4",  // Imagen 3 desteklediği en yakın Instagram oranı
-  [PLATFORM.LINKEDIN]:  "16:9",
-  [PLATFORM.TWITTER]:   "16:9",
-};
 
 // Compositing tuval boyutları (px)
 const FEED_SIZE  = { w: 1080, h: 1440 }; // 3:4
@@ -293,27 +284,6 @@ export class ImageGeneratorAgent {
     const mix = (c: number) => Math.round(c + (255 - c) * amount);
     const toHex = (c: number) => c.toString(16).padStart(2, "0");
     return `#${toHex(mix(r))}${toHex(mix(g))}${toHex(mix(b))}`;
-  }
-
-  private async generate(
-    ai: GoogleGenAI,
-    prompt: string,
-    negativePrompt: string | undefined,
-    aspectRatio: string,
-    uploadDir: string,
-  ): Promise<string> {
-    const config: Record<string, unknown> = { numberOfImages: 1, aspectRatio, outputMimeType: "image/jpeg" };
-    if (negativePrompt) config.negativePrompt = negativePrompt;
-
-    const res = await ai.models.generateImages({ model: IMAGEN_MODEL, prompt, config });
-
-    const b64 = res.generatedImages?.[0]?.image?.imageBytes;
-    if (!b64) throw new Error("Imagen 3 boş yanıt döndürdü.");
-
-    const name     = `${Date.now()}-${crypto.randomBytes(4).toString("hex")}.jpg`;
-    const filePath = path.join(uploadDir, name);
-    await fs.promises.writeFile(filePath, Buffer.from(b64 as string, "base64"));
-    return filePath;
   }
 
   private async log(postId: number, action: string): Promise<void> {
