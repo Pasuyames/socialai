@@ -18,6 +18,15 @@ type Inspection = z.infer<typeof InspectionSchema>;
 
 const APPROVAL_THRESHOLD = 60;
 
+// Görsellerin kök dizini. Worker process'inin cwd'si packages/worker olduğundan
+// process.cwd()/public YANLIŞ klasöre bakar (ImageGenerator PUBLIC_DIR'e yazar).
+// ImageGenerator ile AYNI çözümleme — yoksa "dosya bulunamadı" → 3x ret → needs_human.
+function publicDir(): string {
+  return process.env.PUBLIC_DIR
+    ? path.resolve(process.env.PUBLIC_DIR)
+    : path.join(process.cwd(), "public");
+}
+
 // ─── Ajan ─────────────────────────────────────────────────────────────────────
 
 export class VisualInspectorAgent {
@@ -37,9 +46,9 @@ export class VisualInspectorAgent {
 
       await this.log(postId, "Görsel kalite denetimi (QC) başlatıldı...");
 
-      const feedFilePath  = path.join(process.cwd(), "public", post.imagePath);
+      const feedFilePath  = path.join(publicDir(), post.imagePath);
       const storyFilePath = post.storyImagePath
-        ? path.join(process.cwd(), "public", post.storyImagePath)
+        ? path.join(publicDir(), post.storyImagePath)
         : null;
 
       try {
