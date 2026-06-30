@@ -4,13 +4,20 @@ import prisma from "../db";
 
 // ─── Zod Şeması ───────────────────────────────────────────────────────────────
 
+// LLM bazen serbest-metin alanlarını ("3 sıfat" gibi) DİZİ olarak döndürür
+// (örn. ["Cesur","Özgün","Sıcak"]). Bunu reddedip ajanı patlatmak yerine,
+// dizi gelirse virgülle birleştirip string'e çeviririz (dayanıklı parse).
+const looseString = z
+  .union([z.string(), z.array(z.string())])
+  .transform((v) => (Array.isArray(v) ? v.join(", ") : v));
+
 const ToneOfVoiceSchema = z.object({
   personaName: z.string(),
-  coreTone: z.string(),
-  sentenceStructure: z.string(),
+  coreTone: looseString,
+  sentenceStructure: looseString,
   dos: z.array(z.string()).min(3).max(6),
   donts: z.array(z.string()).min(3).max(6),
-  emojiUsage: z.string(),
+  emojiUsage: looseString,
   vocabulary: z.array(z.string()).min(4).max(8),
   forbiddenWords: z.array(z.string()).min(3).max(8),
   platformAdaptations: z.object({
@@ -98,7 +105,7 @@ SADECE JSON dön:
 
 {
   "personaName": "Sesin insan hali — bir isim ver (Örn: Bilge Dost, Meydan Okuyan Uzman, Şakacı Marka)",
-  "coreTone": "3 sıfat: ana tonu yansıtır (Örn: Cesur, Özgün, Sıcak)",
+  "coreTone": "TEK BİR STRING (dizi DEĞİL): ana tonu yansıtan 3 sıfat virgülle (Örn: \"Cesur, Özgün, Sıcak\")",
   "sentenceStructure": "Cümle ritmi nasıl olacak? Uzun mu kısa mı? Soru kullanılacak mı? Örnek ver.",
   "dos": [
     "Kısa, nefes kesen cümleler kur — 5-8 kelime",

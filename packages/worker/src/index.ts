@@ -32,6 +32,35 @@ const queue = new Queue(QUEUE_NAME, { connection });
 // Metin üretimini görsele "hazır" gösteren statüler.
 const IMAGE_READY_STATUSES = ['ready_for_image', 'image_prompt_ready'];
 
+// Plan durumunu, kuyruktaki işler ilerledikçe OTOMATİK ilerlet (idempotent).
+// In-process döngü kaldırıldığı için plan-seviyesi geçişleri burada yapılır:
+//   - tüm metinler bitince (ideation/writing kalmadıysa) → image_generation
+//   - tüm görseller bitince (image_prompt_ready/generating_image kalmadıysa) → review
+// Concurrency'de iki job aynı anda kontrol etse de set idempotent olduğu için güvenli.
+async function maybeAdvancePlan(planId: number | undefined, phase: 'text' | 'image'): Promise<void> {
+  if (!planId) return;
+  try {
+    const { default: prisma } = await import('../../web/src/lib/db');
+    const posts = await prisma.post.findMany({ where: { planId }, select: { status: true } });
+    if (posts.length === 0) return;
+    if (phase === 'text') {
+      const pendingText = posts.some((p) => p.status === 'ideation' || p.status === 'writing');
+      if (!pendingText) {
+        await prisma.monthlyPlan.update({ where: { id: planId }, data: { status: 'image_generation' } });
+        console.log(`[Worker] ⤴ plan#${planId}: tüm metinler hazır → image_generation`);
+      }
+    } else {
+      const pendingImage = posts.some((p) => p.status === 'image_prompt_ready' || p.status === 'generating_image');
+      if (!pendingImage) {
+        await prisma.monthlyPlan.update({ where: { id: planId }, data: { status: 'review' } });
+        console.log(`[Worker] ⤴ plan#${planId}: tüm görseller bitti → review`);
+      }
+    }
+  } catch (e) {
+    console.warn('[Worker] plan durum ilerletme atlandı:', (e as Error).message);
+  }
+}
+
 async function handleProcessPost(job: Job): Promise<unknown> {
   const { postId, planId, skipImages } = job.data as ProcessPostPayload;
   if (!postId) throw new Error('processPost: postId eksik.');
@@ -59,6 +88,9 @@ async function handleProcessPost(job: Job): Promise<unknown> {
     }
   }
 
+  // Tüm metinler bittiyse planı görsel aşamasına ilerlet.
+  await maybeAdvancePlan(planId, 'text');
+
   return { postId, ...result };
 }
 
@@ -71,6 +103,11 @@ async function handleProcessImage(job: Job): Promise<unknown> {
   const { Orchestrator } = await import('../../web/src/lib/agents/Orchestrator');
   const result = await Orchestrator.startImageGenerationWithRetry(postId);
   if (!result.success) throw new Error(result.error ?? 'Görsel üretimi başarısız.');
+
+  // Tüm görseller bittiyse planı incelemeye (review) ilerlet.
+  const { planId } = job.data as ProcessImagePayload;
+  await maybeAdvancePlan(planId, 'image');
+
   return { postId, ...result };
 }
 

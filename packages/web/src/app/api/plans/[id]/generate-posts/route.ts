@@ -1,8 +1,9 @@
 import { NextResponse }  from "next/server";
-import { Orchestrator }  from "@/lib/agents/Orchestrator";
 import { PLAN_STATUS }   from "@/lib/constants";
 import { authorizePlan } from "@/lib/authz";
 import { rateLimitOrError } from "@/lib/rateLimit";
+import { agentQueue }    from "@/lib/queues";
+import { JOB_NAMES }     from "@socialai/common";
 import prisma            from "@/lib/db";
 
 export async function POST(
@@ -28,29 +29,34 @@ export async function POST(
       return NextResponse.json({ error: "Yazılacak gönderi bulunamadı." }, { status: 400 });
     }
 
-    // Arka planda çalıştır
-    (async () => {
-      await prisma.monthlyPlan.update({
-        where: { id: planId },
-        data:  { status: PLAN_STATUS.POST_GENERATION },
-      });
-
-      let success = 0;
-      for (const post of posts) {
-        const r = await Orchestrator.startPostCreation(post.id);
-        if (r.success) success++;
-      }
-
-      await prisma.monthlyPlan.update({
-        where: { id: planId },
-        data:  { status: success > 0 ? PLAN_STATUS.IMAGE_GENERATION : PLAN_STATUS.POST_GENERATION_FAILED },
-      });
-    })().catch(async (err) => {
-      console.error("[generate-posts]", err);
-      await prisma.monthlyPlan.update({ where: { id: planId }, data: { status: PLAN_STATUS.POST_GENERATION_FAILED } });
+    await prisma.monthlyPlan.update({
+      where: { id: planId },
+      data:  { status: PLAN_STATUS.POST_GENERATION },
     });
 
-    return NextResponse.json({ message: "Metin yazımı başlatıldı.", total: posts.length });
+    // In-process senkron döngü YERİNE BullMQ kuyruğuna ekle. Worker dayanıklı
+    // şekilde işler: web deploy/restart'ında ölmez, concurrency + rate-limit +
+    // attempts/backoff worker tarafında. İşler /admin/queues'ten izlenir.
+    // skipImages: true → görseller ayrı "Görsel Üret" adımıyla tetiklenir
+    // (worker, tüm metinler bitince planı IMAGE_GENERATION'a çeker).
+    const jobs = await agentQueue.addBulk(
+      posts.map((p) => ({
+        name: JOB_NAMES.PROCESS_POST,
+        data: { postId: p.id, planId, skipImages: true },
+        opts: {
+          attempts: 2,
+          backoff: { type: "exponential" as const, delay: 5000 },
+          removeOnComplete: false,
+          removeOnFail: false,
+        },
+      })),
+    );
+
+    return NextResponse.json({
+      message: "Metin yazımı kuyruğa eklendi.",
+      total: posts.length,
+      enqueued: jobs.length,
+    });
   } catch {
     return NextResponse.json({ error: "Sunucu hatası." }, { status: 500 });
   }

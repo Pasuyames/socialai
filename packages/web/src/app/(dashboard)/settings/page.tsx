@@ -1,5 +1,7 @@
 import prisma from "@/lib/db";
 import { Settings, Brain, Activity, Wifi, WifiOff, CheckCircle2, Clock } from "lucide-react";
+import { auth } from "@/lib/auth";
+import { agentLogOrgWhere } from "@/lib/agentLogScope";
 
 export const dynamic = "force-dynamic";
 
@@ -42,8 +44,14 @@ const roleColors: Record<string, string> = {
 };
 
 export default async function SettingsPage() {
-  const recentLogs = await prisma.agentLog.findMany({ orderBy: { createdAt: "desc" }, take: 12 });
-  const totalLogs  = await prisma.agentLog.count();
+  // AgentLog org'a göre filtrelenmeli — aksi halde her müşteri tüm sistemin
+  // aktivitesini ve toplam sayısını görür (çok-kiracılı sızıntı).
+  const session = await auth();
+  const orgId   = session?.user ? parseInt((session.user as any).organizationId) : null;
+  const scope   = await agentLogOrgWhere(orgId);
+
+  const recentLogs = await prisma.agentLog.findMany({ where: scope, orderBy: { createdAt: "desc" }, take: 12 });
+  const totalLogs  = await prisma.agentLog.count({ where: scope });
 
   const grouped = agents.reduce((acc, a) => {
     if (!acc[a.role]) acc[a.role] = [];

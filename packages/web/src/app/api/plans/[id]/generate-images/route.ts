@@ -1,8 +1,9 @@
 import { NextResponse }  from "next/server";
-import { Orchestrator }  from "@/lib/agents/Orchestrator";
 import { PLAN_STATUS }   from "@/lib/constants";
 import { authorizePlan } from "@/lib/authz";
 import { rateLimitOrError } from "@/lib/rateLimit";
+import { agentQueue }    from "@/lib/queues";
+import { JOB_NAMES }     from "@socialai/common";
 import prisma            from "@/lib/db";
 
 export async function POST(
@@ -29,29 +30,33 @@ export async function POST(
       return NextResponse.json({ error: "Görsel üretilecek gönderi bulunamadı." }, { status: 400 });
     }
 
-    (async () => {
-      await prisma.monthlyPlan.update({
-        where: { id: planId },
-        data:  { status: PLAN_STATUS.IMAGE_GENERATION },
-      });
-
-      let success = 0;
-      for (let i = 0; i < posts.length; i++) {
-        if (i > 0) await new Promise(r => setTimeout(r, 30_000)); // 30s between posts — Imagen quota
-        const result = await Orchestrator.startImageGenerationWithRetry(posts[i].id);
-        if (result.success) success++;
-      }
-
-      await prisma.monthlyPlan.update({
-        where: { id: planId },
-        data:  { status: PLAN_STATUS.REVIEW },
-      });
-    })().catch(async (err) => {
-      console.error("[generate-images]", err);
-      await prisma.monthlyPlan.update({ where: { id: planId }, data: { status: PLAN_STATUS.IMAGE_GENERATION } });
+    await prisma.monthlyPlan.update({
+      where: { id: planId },
+      data:  { status: PLAN_STATUS.IMAGE_GENERATION },
     });
 
-    return NextResponse.json({ message: "Görsel üretim başlatıldı.", total: posts.length });
+    // In-process arka plan döngüsü (30sn aralıklı, web restart'ında ölen) YERİNE
+    // her gönderiyi BullMQ görsel kuyruğuna ekle. Worker dayanıklı işler:
+    // concurrency + rate-limit (Imagen kotası) + attempts/backoff worker'da.
+    // Tüm görseller bitince worker planı REVIEW'a çeker. /admin/queues'ten izlenir.
+    const jobs = await agentQueue.addBulk(
+      posts.map((p) => ({
+        name: JOB_NAMES.PROCESS_IMAGE,
+        data: { postId: p.id, planId },
+        opts: {
+          attempts: 2,
+          backoff: { type: "exponential" as const, delay: 5000 },
+          removeOnComplete: false,
+          removeOnFail: false,
+        },
+      })),
+    );
+
+    return NextResponse.json({
+      message: "Görsel üretimi kuyruğa eklendi.",
+      total: posts.length,
+      enqueued: jobs.length,
+    });
   } catch {
     return NextResponse.json({ error: "Sunucu hatası." }, { status: 500 });
   }

@@ -6,6 +6,7 @@ import { StatusBadge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { auth } from "@/lib/auth";
+import { agentLogOrgWhere } from "@/lib/agentLogScope";
 
 export const dynamic = "force-dynamic";
 
@@ -55,12 +56,16 @@ export default async function DashboardPage() {
   const brandWhere = orgId ? { organizationId: orgId } : {};
   const postWhere  = orgId ? { plan: { brand: { organizationId: orgId } } } : {};
 
+  // AgentLog org'a göre filtrelenmeli — aksi halde dashboard tüm müşterilerin
+  // aktivitesini gösterir (çok-kiracılı sızıntı). Hedef sahipliği üzerinden filtrele.
+  const logScope = await agentLogOrgWhere(orgId);
+
   const [brandCount, planCount, postCount, approvedCount, recentLogs, upcomingPosts] = await Promise.all([
     prisma.brand.count({ where: brandWhere }),
     prisma.monthlyPlan.count({ where: orgId ? { brand: { organizationId: orgId } } : {} }),
     prisma.post.count({ where: postWhere }),
     prisma.post.count({ where: { ...postWhere, status: { in: ["client_review", "approved", "published"] } } }),
-    prisma.agentLog.findMany({ orderBy: { createdAt: "desc" }, take: 8 }),
+    prisma.agentLog.findMany({ where: logScope, orderBy: { createdAt: "desc" }, take: 8 }),
     prisma.post.findMany({
       where: { ...postWhere, scheduledAt: { not: null } },
       include: { plan: { include: { brand: true } } },
