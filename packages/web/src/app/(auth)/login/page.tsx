@@ -1,12 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import { signIn } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Loader2, Mail, Lock, Zap, ArrowRight } from "lucide-react";
 
-export default function LoginPage() {
+function LoginForm() {
   const router     = useRouter();
   const params     = useSearchParams();
   // Açık yönlendirme koruması: yalnızca site-içi mutlak path'e izin ver
@@ -129,5 +129,14 @@ export default function LoginPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+// useSearchParams() statik prerender'da Suspense boundary gerektirir (Next 16).
+export default function LoginPage() {
+  return (
+    <Suspense fallback={null}>
+      <LoginForm />
+    </Suspense>
   );
 }

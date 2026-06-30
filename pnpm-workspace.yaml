@@ -1,2 +1,17 @@
 packages:
   - 'packages/*'
+
+# pnpm 11+ varsayılan olarak bağımlılıkların build/postinstall script'lerini
+# güvenlik için engeller. Sistemin çalışması için aşağıdakilerin derlenmesi ŞART
+# (native binary / Prisma engine / esbuild ikilisi). pnpm 11.9 bunu allowBuilds
+# (isim → true/false) ile yönetir:
+allowBuilds:
+  '@google/genai': true
+  '@prisma/client': true
+  '@prisma/engines': true
+  prisma: true
+  esbuild: true
+  sharp: true
+  msgpackr-extract: true
+  protobufjs: true
+  unrs-resolver: true

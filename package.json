@@ -7,8 +7,8 @@
     "build": "pnpm --filter '*' build",
     "generate": "pnpm --filter worker generate",
 
-    "build:web": "pnpm --filter web build",
-    "prisma:push": "pnpm --filter worker exec prisma db push --schema=../web/prisma/schema.prisma",
+    "build:web": "NODE_OPTIONS=--max-old-space-size=4096 pnpm --filter web build",
+    "prisma:push": "pnpm --filter worker exec bash -c 'set -a; . ../web/.env; set +a; prisma db push --schema=../web/prisma/schema.prisma'",
     "start:web": "pnpm --filter web start",
     "start:worker": "pnpm --filter worker start",
 

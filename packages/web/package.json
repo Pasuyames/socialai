@@ -19,6 +19,7 @@
     "@pdf-lib/fontkit": "^1.1.1",
     "@pdfme/common": "^6.1.3",
     "@pdfme/generator": "^6.1.3",
+    "@pdfme/schemas": "6.1.3",
     "@prisma/client": "^5.22.0",
     "@socialai/common": "workspace:*",
     "bcryptjs": "^3.0.3",
