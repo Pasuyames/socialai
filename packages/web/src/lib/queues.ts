@@ -22,6 +22,17 @@ const globalForQueues = globalThis as unknown as { __agentQueue?: Queue };
 export const agentQueue: Queue =
   globalForQueues.__agentQueue ?? new Queue(QUEUE_NAME, { connection });
 
+// Redis geçici düşse bile web process'i ÇÖKMESİN. ioredis bağlantısı dinleyicisiz
+// 'error' fırlatırsa Node tüm süreci öldürür (dashboard artık her açılışta kuyruğa
+// dokunduğu için kritik). Sessizce yut — getQueueCounts zaten timeout+fallback yapar.
+if (!globalForQueues.__agentQueue) {
+  agentQueue.on("error", (err: Error & { code?: string }) => {
+    if (err?.code !== "ECONNREFUSED") {
+      console.warn("[queues] Redis bağlantı hatası (yok sayıldı):", err?.message);
+    }
+  });
+}
+
 if (process.env.NODE_ENV !== "production") {
   globalForQueues.__agentQueue = agentQueue;
 }

@@ -29,6 +29,11 @@ const statusMap: Record<string, BadgeVariant> = {
   ready:             "success",
   published:         "success",
   failed:            "danger",
+  reviewed:                 "success",
+  ready_for_image:          "accent",
+  image_prompt_ready:       "accent",
+  needs_rewrite:            "warning",
+  needs_human_intervention: "danger",
 };
 
 export function Badge({ variant = "default", className = "", children }: BadgeProps) {
@@ -54,6 +59,11 @@ export function StatusBadge({ status }: { status: string }) {
     ready:            "Hazır",
     published:        "Yayında",
     failed:           "Hata",
+    reviewed:                 "İncelendi",
+    ready_for_image:          "Görsel Hazırlığı",
+    image_prompt_ready:       "Görsel Bekliyor",
+    needs_rewrite:            "Revizyon Bekliyor",
+    needs_human_intervention: "Manuel Müdahale",
   };
   return <Badge variant={variant}>{labels[status] ?? status}</Badge>;
 }
