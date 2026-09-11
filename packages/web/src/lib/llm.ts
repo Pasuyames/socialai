@@ -1,6 +1,7 @@
 import { GoogleGenAI } from "@google/genai";
 import { z } from "zod";
 import { Langfuse } from "langfuse";
+import { safeFetch } from "./security/ssrf";
 
 // ─── Model Seviyeleri ─────────────────────────────────────────────────────────
 //
@@ -315,6 +316,13 @@ KRİTİK KURAL: Yanıtın SADECE geçerli JSON olmalı.
 //  Görselleri base64'e çevirip Gemini Vision ile analiz eder.
 //  imageUrls: public HTTP URL listesi (max 5)
 //
+//  ⚠️ GÜVENLİK: Bu URL'ler DIŞ KONTROLLÜ. VisualInspiration ajanı, Firecrawl ile
+//  çekilen 3. taraf sayfalardan (Pinterest/Behance/Dribbble) LLM'e URL listesi
+//  çıkartıyor; saldırgan bu sayfalara içerik enjekte edip sunucuya iç ağ isteği
+//  attırabilir. Bu yüzden ham fetch DEĞİL, safeFetch kullanılır: özel/rezerve IP
+//  aralıklarını (169.254.169.254 metadata, 127.0.0.1, 10.x, ULA IPv6 ...),
+//  yerel hostname'leri, DNS rebinding'i ve redirect ile bypass'ı engeller.
+//
 export async function generateTextWithVision(
   prompt: string,
   imageUrls: string[],
@@ -328,12 +336,21 @@ export async function generateTextWithVision(
   const imageParts: { inlineData: { mimeType: string; data: string } }[] = [];
   for (const url of imageUrls.slice(0, 5)) {
     try {
-      const res  = await fetch(url, { signal: AbortSignal.timeout(10_000) });
+      // safeFetch SSRF doğrulaması yapar (iç IP / metadata / redirect bypass engellenir).
+      // Mevcut 10 sn'lik timeout davranışı korunuyor.
+      const res  = await safeFetch(url, { signal: AbortSignal.timeout(10_000) });
       if (!res.ok) continue;
       const mime = res.headers.get("content-type")?.split(";")[0] ?? "image/jpeg";
       const buf  = await res.arrayBuffer();
       imageParts.push({ inlineData: { mimeType: mime, data: Buffer.from(buf).toString("base64") } });
-    } catch { /* atla */ }
+    } catch (err: any) {
+      // Tek bir görselin inememesi pipeline'ı çökertmemeli — sessizce atlanır.
+      // Ama engellenen/başarısız URL'ler görünmez kalmasın: URL'in tamamını
+      // değil sadece host'unu logla (log enjeksiyonu / gürültü riskini azaltır).
+      let host = "bilinmeyen-host";
+      try { host = new URL(url).hostname; } catch { /* URL parse edilemedi */ }
+      console.warn(`[LLM:${taskName}] Görsel atlandı (${host}): ${err?.message ?? "bilinmeyen hata"}`);
+    }
   }
 
   if (imageParts.length === 0) throw new Error("Hiçbir görsel indirilemedi.");

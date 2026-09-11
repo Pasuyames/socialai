@@ -1,5 +1,5 @@
 import prisma from "@/lib/db";
-import { auth } from "@/lib/auth";
+import { getScope } from "@/lib/session";
 import { agentLogOrgWhere } from "@/lib/agentLogScope";
 import { getQueueCounts, getLangfuseMetrics } from "@/lib/observability";
 import { DashboardCockpit, type CockpitData } from "@/components/dashboard/DashboardCockpit";
@@ -7,11 +7,11 @@ import { DashboardCockpit, type CockpitData } from "@/components/dashboard/Dashb
 export const dynamic = "force-dynamic";
 
 export default async function DashboardPage() {
-  const session = await auth();
-  const orgId   = session?.user ? parseInt((session.user as any).organizationId) : null;
+  // Fail-closed kapsam: kimlik belirsizse veri yok (bkz. lib/session.ts getScope)
+  const { orgId, seesAll } = await getScope();
 
-  const brandWhere = orgId ? { organizationId: orgId } : {};
-  const postWhere  = orgId ? { plan: { brand: { organizationId: orgId } } } : {};
+  const brandWhere = seesAll ? {} : { organizationId: orgId! };
+  const postWhere  = seesAll ? {} : { plan: { brand: { organizationId: orgId! } } };
 
   // AgentLog org'a göre filtrelenmeli (çok-kiracılı izolasyon) — hedef sahipliği üzerinden.
   const logScope = await agentLogOrgWhere(orgId);
@@ -21,7 +21,7 @@ export default async function DashboardPage() {
     recentLogs, recentContent, queue, langfuse,
   ] = await Promise.all([
     prisma.brand.count({ where: brandWhere }),
-    prisma.monthlyPlan.count({ where: orgId ? { brand: { organizationId: orgId } } : {} }),
+    prisma.monthlyPlan.count({ where: seesAll ? {} : { brand: { organizationId: orgId! } } }),
     prisma.post.count({ where: postWhere }),
     prisma.post.count({ where: { ...postWhere, status: { in: ["client_review", "approved", "published"] } } }),
     prisma.agentLog.findMany({ where: logScope, orderBy: { createdAt: "desc" }, take: 8 }),

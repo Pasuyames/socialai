@@ -5,15 +5,15 @@ import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { EmptyState } from "@/components/ui/EmptyState";
-import { auth } from "@/lib/auth";
+import { getScope } from "@/lib/session";
 
 export const dynamic = "force-dynamic";
 
 export default async function BrandsPage() {
-  const session = await auth();
-  const orgId = session?.user ? parseInt((session.user as any).organizationId) : null;
+  // Fail-closed kapsam: kimlik belirsizse veri yok (bkz. lib/session.ts getScope)
+  const { orgId, seesAll } = await getScope();
   const brands = await prisma.brand.findMany({
-    where: orgId ? { organizationId: orgId } : {},
+    where: seesAll ? {} : { organizationId: orgId! },
     orderBy: { createdAt: "desc" },
   });
 

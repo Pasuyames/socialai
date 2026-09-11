@@ -4,18 +4,18 @@ import prisma from "@/lib/db";
 import { Button } from "@/components/ui/Button";
 import { StatusBadge } from "@/components/ui/Badge";
 import { EmptyState } from "@/components/ui/EmptyState";
-import { auth } from "@/lib/auth";
+import { getScope } from "@/lib/session";
 
 export const dynamic = "force-dynamic";
 
 const MONTHS = ["Ocak","Şubat","Mart","Nisan","Mayıs","Haziran","Temmuz","Ağustos","Eylül","Ekim","Kasım","Aralık"];
 
 export default async function PlansPage() {
-  const session = await auth();
-  const orgId = session?.user ? parseInt((session.user as any).organizationId) : null;
+  // Fail-closed kapsam: kimlik belirsizse veri yok (bkz. lib/session.ts getScope)
+  const { orgId, seesAll } = await getScope();
 
   const plans = await prisma.monthlyPlan.findMany({
-    where: orgId ? { brand: { organizationId: orgId } } : {},
+    where: seesAll ? {} : { brand: { organizationId: orgId! } },
     include: { brand: true, posts: true },
     orderBy: { createdAt: "desc" },
   });

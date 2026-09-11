@@ -46,11 +46,51 @@ export function resetRateLimit(key: string): void {
   store.delete(key);
 }
 
-// İstek IP'sini güvenilir başlıklardan çıkarır
+// ─── İstemci IP'si ────────────────────────────────────────────────────────────
+//
+// ⚠️ `X-Forwarded-For` / `X-Real-IP` İSTEMCİNİN UYDURABİLDİĞİ başlıklardır.
+// Uygulama doğrudan açıktaysa (veya ters proxy bu başlıkları EZMİYORSA),
+// saldırgan her istekte farklı bir sahte IP göndererek IP başına uygulanan
+// limitleri (örn. register 5/saat) sınırsız aşar. Bu yüzden başlıklara yalnızca
+// `TRUST_PROXY` açıkken güvenilir.
+//
+// VARSAYILAN: GÜVENME (`TRUST_PROXY` yoksa/false).
+// Gerekçe: bu proje PM2 ile doğrudan da açığa çıkabiliyor (bkz. DEPLOYMENT.md —
+// nginx zorunlu değil). "Güven" varsayılanı, proxy'siz kurulumda sessizce
+// sömürülebilir bir açık bırakır; "güvenme" varsayılanı ise en kötü ihtimalle
+// limiti fazla sıkı yapar. Yanlış tarafa düşme maliyeti düşük olan seçenek bu.
+//
+// ⚠️ Next.js gerçeği: route handler'daki `Request` nesnesinden soket IP'si
+// ALINAMAZ. Next kendi sunucusunda `x-forwarded-for`'u yalnızca başlık YOKSA
+// (`??=`, base-server.js) soket adresiyle doldurur; istemci başlığı gönderdiyse
+// onu olduğu gibi bırakır. Yani "Next doldurdu mu, istemci mi uydurdu"
+// ayırt edilemez — güvenilir bir alternatif başlık yok.
+//
+// ⚠️ SONUÇ: güvenilmediğinde sabit `UNTRUSTED_IP` değeri döner, yani limit
+// IP başına değil GLOBAL olur (tüm istemciler tek kovayı paylaşır). Şu an tek
+// kullanıcısı register route'u olduğu için etkisi "saatte 5 kayıt (toplam)".
+// Ters proxy arkasındaysanız `TRUST_PROXY=true` verin — limit tekrar IP bazına
+// döner.
+export const UNTRUSTED_IP = "untrusted";
+
+function trustProxy(): boolean {
+  const v = process.env.TRUST_PROXY?.trim().toLowerCase();
+  return v === "true" || v === "1";
+}
+
 export function getClientIp(req: Request): string {
+  if (!trustProxy()) return UNTRUSTED_IP;
+
+  // Proxy'ye güveniyoruz. XFF zinciri: "<istemcinin uydurduğu...>, <proxy'nin gördüğü>"
+  // nginx'in yaygın `$proxy_add_x_forwarded_for` ayarı istemcinin gönderdiği
+  // değeri KORUYUP gerçek IP'yi SONA ekler → ilk eleman hâlâ sahte olabilir.
+  // Bu yüzden SON eleman alınır: en yakın güvenilir proxy'nin fiilen gördüğü adres.
   const xff = req.headers.get("x-forwarded-for");
-  if (xff) return xff.split(",")[0]!.trim();
-  return req.headers.get("x-real-ip") ?? "unknown";
+  if (xff) {
+    const parts = xff.split(",").map((s) => s.trim()).filter(Boolean);
+    if (parts.length > 0) return parts[parts.length - 1]!;
+  }
+  return req.headers.get("x-real-ip")?.trim() || UNTRUSTED_IP;
 }
 
 // Route'larda tek satırlık kullanım: limit aşıldıysa 429 döndürür, yoksa null.
