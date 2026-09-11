@@ -7,10 +7,10 @@ import { checkLimit } from "@/lib/subscription";
 import { logBgError } from "@/lib/bgError";
 
 const BrandSchema = z.object({
-  name:            z.string().trim().min(1, "Marka adı zorunludur.").max(120),
-  websiteUrl:      z.string().trim().url("Geçerli bir web sitesi URL'si girin.").max(2048).optional().or(z.literal("")),
-  instagramHandle: z.string().trim().max(60).optional(),
-  industry:        z.string().trim().max(40).optional(),
+  name:            z.string().trim().min(1, "Marka adı zorunludur.").max(120, "Marka adı en fazla 120 karakter olabilir."),
+  websiteUrl:      z.string().trim().url("Geçerli bir web sitesi URL'si girin.").max(2048, "Web sitesi adresi çok uzun.").optional().or(z.literal("")),
+  instagramHandle: z.string().trim().max(60, "Instagram kullanıcı adı en fazla 60 karakter olabilir.").optional(),
+  industry:        z.string().trim().max(40, "Geçersiz sektör.").optional(),
 });
 
 export async function POST(req: Request) {

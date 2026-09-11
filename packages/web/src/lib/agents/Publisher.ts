@@ -3,6 +3,23 @@ import fs from "fs";
 import path from "path";
 import { POST_STATUS, PLATFORM } from "../constants";
 
+// ─── Simülasyon modu ─────────────────────────────────────────────────────────
+//
+// Yayın kimlik bilgileri eksikken sistem ESKİDEN sessizce "simüle" edip gönderiyi
+// `published` işaretliyor, publishedAt yazıyor ve sahte bir ID (`sim_ig_...`)
+// veriyordu. Arayüzde bu GERÇEK yayından ayırt edilemiyordu: production'da token
+// süresi dolsa müşteri "içeriğim yayınlandı" görür, oysa hiçbir şey paylaşılmamış
+// olur. Simülasyon artık AÇIK RIZA gerektirir; aksi halde yayın başarısız olur ve
+// gönderi `approved` durumunda kalır (tekrar denenebilir).
+const SIMULATE = process.env.PUBLISH_SIMULATE === "true" || process.env.PUBLISH_SIMULATE === "1";
+
+function missingCredentials(platform: string, vars: string): Error {
+  return new Error(
+    `${platform} kimlik bilgileri eksik (${vars}). Yayın yapılmadı. ` +
+    `Geliştirme ortamında sahte yayın için PUBLISH_SIMULATE=true kullanın.`,
+  );
+}
+
 // ─── Ajan ─────────────────────────────────────────────────────────────────────
 
 export class PublisherAgent {
@@ -33,8 +50,16 @@ export class PublisherAgent {
         externalId = await this.publishToLinkedIn(post, brand);
       } else {
         // Twitter/X — API entegrasyonu ileride
-        await this.log(postId, "Twitter/X yayını henüz entegre edilmedi — simüle ediliyor.");
+        if (!SIMULATE) throw new Error("Twitter/X yayını henüz entegre edilmedi.");
+        await this.log(postId, "Twitter/X entegre değil — SİMÜLE ediliyor (PUBLISH_SIMULATE açık).");
         externalId = `sim_${Date.now()}`;
+      }
+
+      // externalId null ise yayın GERÇEKLEŞMEMİŞTİR. Eskiden bu durumda da
+      // gönderi `published` işaretleniyordu (ör. görsel yolu eksikken) — yani
+      // yayınlanmamış içerik yayınlanmış görünüyordu.
+      if (!externalId) {
+        throw new Error("Yayın sağlayıcısı gönderi kimliği döndürmedi — yayın doğrulanamadı.");
       }
 
       await prisma.post.update({
@@ -46,7 +71,13 @@ export class PublisherAgent {
         },
       });
 
-      await this.log(postId, `Gönderi yayınlandı. Platform: ${platform}, ID: ${externalId ?? "N/A"}`);
+      const simulated = externalId.startsWith("sim_");
+      await this.log(
+        postId,
+        simulated
+          ? `SİMÜLE yayın (gerçek paylaşım YAPILMADI). Platform: ${platform}, ID: ${externalId}`
+          : `Gönderi yayınlandı. Platform: ${platform}, ID: ${externalId}`,
+      );
       return true;
 
     } catch (err: any) {
@@ -62,7 +93,10 @@ export class PublisherAgent {
     const igUserId    = process.env.INSTAGRAM_BUSINESS_ACCOUNT_ID;
 
     if (!accessToken || !igUserId) {
-      await this.log(post.id, "UYARI: Instagram API token/ID eksik — simüle ediliyor.");
+      if (!SIMULATE) {
+        throw missingCredentials("Instagram", "INSTAGRAM_ACCESS_TOKEN / INSTAGRAM_BUSINESS_ACCOUNT_ID");
+      }
+      await this.log(post.id, "Instagram kimliği eksik — SİMÜLE ediliyor (PUBLISH_SIMULATE açık).");
       return `sim_ig_${Date.now()}`;
     }
 
@@ -131,7 +165,10 @@ export class PublisherAgent {
     const orgId       = process.env.LINKEDIN_ORGANIZATION_ID;
 
     if (!accessToken || !orgId) {
-      await this.log(post.id, "UYARI: LinkedIn API token/ID eksik — simüle ediliyor.");
+      if (!SIMULATE) {
+        throw missingCredentials("LinkedIn", "LINKEDIN_ACCESS_TOKEN / LINKEDIN_ORGANIZATION_ID");
+      }
+      await this.log(post.id, "LinkedIn kimliği eksik — SİMÜLE ediliyor (PUBLISH_SIMULATE açık).");
       return `sim_li_${Date.now()}`;
     }
 

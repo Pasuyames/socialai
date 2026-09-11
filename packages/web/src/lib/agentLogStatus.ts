@@ -11,6 +11,15 @@ export function deriveAgentLogStatus(action: string): AgentLogStatus {
   // Sıra önemli: önce başarısızlık, sonra insan-gerekli, sonra başarı.
   if (/başarısız|hata|durduruldu|edilemedi|reddedildi/.test(a)) return "FAILED";
   if (/kritik|müdahale|needs_human/.test(a)) return "NEEDS_HUMAN";
-  if (/tamamlandı|hazır|üretildi|başarılı|geçti|eşleşti|onaylandı|indirildi/.test(a)) return "SUCCESS";
+  // NOT: bazı ajanlar log metnini ASCII yazıyor ("PDF hazir", "zamanlandi"),
+  // bu yüzden Türkçe karakterli ve ASCII varyantlar birlikte eşleşir. Aksi halde
+  // tamamlanmış işler /admin/activity ekranında gri INFO rozetiyle görünüyordu.
+  if (
+    /tamamlandı|tamamlandi|hazır|hazir|üretildi|uretildi|başarılı|basarili/.test(a) ||
+    /geçti|gecti|eşleşti|eslesti|onaylandı|onaylandi|indirildi/.test(a) ||
+    /zamanlandı|zamanlandi|belirlendi|yayınlandı|yayinlandi|eklendi|güncellendi|guncellendi/.test(a)
+  ) {
+    return "SUCCESS";
+  }
   return "INFO";
 }

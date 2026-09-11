@@ -18,9 +18,26 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     return NextResponse.json({ error: "Yayınlamak için önce onaylanmalı." }, { status: 400 });
   }
 
-  // Arka planda yayınla
-  const publisher = new PublisherAgent();
-  publisher.execute(postId).catch(logBgError("Gönderi yayınlama", "Post", postId));
+  // Yayınlama SENKRON çalışır — arka plana atılmaz.
+  //
+  // Eskiden fire-and-forget'ti ve route koşulsuz {ok:true} dönüyordu: kimlik
+  // bilgileri eksikken veya Instagram API hata verdiğinde bile kullanıcı
+  // "yayınlandı" görüyor, gerçek sonucu yalnızca AgentLog'a bakarsa öğreniyordu.
+  // Yayın, ajan zincirleri gibi dakikalar süren bir iş değil (tek API çağrısı,
+  // içeride 30 sn timeout'lu) — sonucu beklemek doğru davranış.
+  const ok = await new PublisherAgent()
+    .execute(postId)
+    .catch(async (err) => {
+      await logBgError("Gönderi yayınlama", "Post", postId)(err);
+      return false;
+    });
+
+  if (!ok) {
+    return NextResponse.json(
+      { error: "Yayınlanamadı. Ayrıntı için aktivite kaydına bakın." },
+      { status: 502 },
+    );
+  }
 
   return NextResponse.json({ ok: true });
 }

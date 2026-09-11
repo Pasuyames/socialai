@@ -27,9 +27,25 @@ const STORY_SIZE = { w: 1080, h: 1920 }; // 9:16
 // kullanılır → görseller her zaman web'in public/'ine düşer, URL'ler (/uploads/...)
 // her iki bağlamda da tutarlı kalır.
 function publicDir(): string {
-  return process.env.PUBLIC_DIR
-    ? path.resolve(process.env.PUBLIC_DIR)
-    : path.join(process.cwd(), "public");
+  if (!process.env.PUBLIC_DIR) return path.join(process.cwd(), "public");
+
+  const dir = path.resolve(process.env.PUBLIC_DIR);
+
+  // SESSİZ HATA KORUMASI — bu bir kez fena halde ısırdı:
+  // Proje Desktop'tan Projects'e taşındıktan sonra PUBLIC_DIR eski yolda kalmıştı.
+  // Görseller ölü klasöre yazılıyor, web sunucusu yeni klasörden servis ediyordu →
+  // üretim "başarılı" görünüyor ama HER görsel URL'i 404 dönüyordu. Aşağıdaki
+  // mkdir(recursive) yanlış yolu memnuniyetle OLUŞTURDUĞU için hata hiç fark
+  // edilmiyordu. Doğru PUBLIC_DIR her zaman ZATEN VAR olan repo klasörüdür;
+  // yoksa sessizce devam etmek yerine yüksek sesle patla.
+  if (!fs.existsSync(dir)) {
+    throw new Error(
+      `PUBLIC_DIR mevcut olmayan bir dizini gösteriyor: ${dir}\n` +
+      `Bu ayar web paketinin public/ klasörünü göstermeli (proje taşındıysa .env güncellenmeli). ` +
+      `Aksi halde üretilen görseller servis edilmeyen bir yere yazılır.`,
+    );
+  }
+  return dir;
 }
 
 export class ImageGeneratorAgent {

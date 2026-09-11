@@ -3,6 +3,7 @@ import { generateJSON } from "../llm";
 import prisma from "../db";
 import { POST_STATUS, PLAN_STATUS, PLATFORM } from "../constants";
 import { getIndustryConfig } from "../constants/industries";
+import { getPlanLimits } from "../subscription";
 
 // ─── Zod Şeması ───────────────────────────────────────────────────────────────
 
@@ -15,9 +16,16 @@ const PostIdeaSchema = z.object({
   dayOfMonth: z.number().int().min(1).max(31),
 });
 
-const IdeaListSchema = z.object({
-  posts: z.array(PostIdeaSchema).min(4).max(30),
-});
+// Liste şeması istenen adede göre kurulur. Alt sınır SABİT 4 OLAMAZ: abonelik
+// kotası 4'ten az yer bıraktığında (örn. 11/12 dolu → 1 kaldı) model doğru
+// şekilde 1 fikir döndürüyor, sabit min(4) ise bunu reddedip iki denemeyi de
+// boşa harcayıp üretimi tamamen başarısız kılıyordu.
+// Kural: 4 ve üzeri isteklerde eski güvence (en az 4) korunur; daha az istendiğinde
+// alt sınır istenen adede iner.
+const ideaListSchema = (wanted: number) =>
+  z.object({
+    posts: z.array(PostIdeaSchema).min(Math.max(1, Math.min(wanted, 4))).max(30),
+  });
 
 // ─── Ajan ─────────────────────────────────────────────────────────────────────
 
@@ -28,7 +36,10 @@ export class IdeationSpecialistAgent {
     try {
       const plan = await prisma.monthlyPlan.findUnique({
         where: { id: planId },
-        include: { brand: true },
+        include: {
+          brand:  { include: { organization: { select: { plan: true } } } },
+          _count: { select: { posts: true } },
+        },
       });
 
       if (!plan?.brand.brandStrategy || !plan.directorBrief) {
@@ -48,17 +59,56 @@ export class IdeationSpecialistAgent {
         return false;
       }
 
-      const postCount = typeof brief.postCountTarget === "number"
+      // ─── Gönderi adedi: brief hedefi × ABONELİK KOTASI ──────────────────────
+      //
+      // Eskiden adet yalnızca brief'ten geliyordu (clamp 4-24) ve plan kotası HİÇ
+      // okunmuyordu. Canlı testte Starter planındaki (kota: 12) bir marka için
+      // 16 gönderi üretildi — %33 kota aşımı, yani ücretsiz kullanım.
+      // Kota, markanın SAHİBİ organizasyonun aboneliğinden okunur; yetim marka
+      // fail-closed olarak en kısıtlı plan sayılır.
+      const orgPlan   = plan.brand.organization?.plan ?? "starter";
+      const quota     = getPlanLimits(orgPlan).maxPostsPerPlan;
+      // Plan yeniden çalıştırılabilir; mevcut gönderiler kotadan düşülür.
+      const remaining = Math.max(0, quota - plan._count.posts);
+
+      if (remaining === 0) {
+        await this.log(
+          planId,
+          `Kota dolu: ${orgPlan} planında plan başına ${quota} gönderi sınırı — yeni fikir üretilmedi.`,
+        );
+        return false;
+      }
+
+      const briefTarget = typeof brief.postCountTarget === "number"
         ? Math.min(Math.max(brief.postCountTarget, 4), 24)
         : 12;
+      const postCount = Math.min(briefTarget, remaining);
+
+      if (postCount < briefTarget) {
+        await this.log(
+          planId,
+          `Brief ${briefTarget} gönderi hedefliyordu; ${orgPlan} planı kotası nedeniyle ${postCount}'e düşürüldü.`,
+        );
+      }
 
       const industryConfig = getIndustryConfig((plan.brand as any).industry);
       const prompt = this.buildPrompt(plan, strategy, brief, postCount, industryConfig.contentRules);
 
-      const { posts } = await generateJSON(prompt, IdeaListSchema, {
+      const { posts: rawPosts } = await generateJSON(prompt, ideaListSchema(postCount), {
         tier: "premium",
         taskName: this.agentName,
       });
+
+      // Modelin döndürdüğü adet PROMPT'A GÜVENİLEREK kabul edilmez: eskiden
+      // döngü posts.length üzerinden dönüyordu, yani model 30 fikir üretse
+      // 30'u da yazılıyordu. Kota burada zorlanır.
+      const posts = rawPosts.slice(0, postCount);
+      if (rawPosts.length > posts.length) {
+        await this.log(
+          planId,
+          `Model ${rawPosts.length} fikir döndürdü; kota gereği ilk ${posts.length} tanesi alındı.`,
+        );
+      }
 
       // Gün dağılımını düzelt (max 2 post/gün, ay sınırları içinde)
       const daysInMonth = new Date(plan.year, plan.month, 0).getDate();
