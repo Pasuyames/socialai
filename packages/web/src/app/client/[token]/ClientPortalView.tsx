@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { CheckCircle, RotateCcw, Download, X, Send, ChevronDown, ChevronUp } from "lucide-react";
+import { CheckCircle, RotateCcw, Download, X, Send, ChevronDown, ChevronUp, AlertCircle } from "lucide-react";
 
 interface Post {
   id: number;
@@ -64,6 +64,7 @@ export default function ClientPortalView({ plan, token }: { plan: Plan; token: s
             post={post}
             index={idx + 1}
             brandColor={brandColor}
+            token={token}
           />
         ))}
       </div>
@@ -75,36 +76,77 @@ export default function ClientPortalView({ plan, token }: { plan: Plan; token: s
   );
 }
 
-function ClientPostCard({ post, index, brandColor }: { post: Post; index: number; brandColor: string }) {
+function ClientPostCard({
+  post,
+  index,
+  brandColor,
+  token,
+}: { post: Post; index: number; brandColor: string; token: string }) {
   const [status, setStatus]       = useState(post.status);
   const [expanded, setExpanded]   = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [notes, setNotes]         = useState("");
   const [loading, setLoading]     = useState(false);
+  const [error, setError]         = useState<string | null>(null);
 
   const dateLabel = post.scheduledAt
     ? new Date(post.scheduledAt).toLocaleDateString("tr-TR", { day: "numeric", month: "long" })
     : "";
 
+  // Sunucudan gelen hata mesajını çıkar; gövde yoksa/JSON değilse genel mesaj ver.
+  const errorMessage = async (res: Response) => {
+    try {
+      const data = await res.json();
+      if (typeof data?.error === "string" && data.error) return data.error;
+    } catch {
+      /* gövde JSON değil — aşağıdaki genel mesaja düş */
+    }
+    return "İşlem tamamlanamadı, lütfen tekrar deneyin.";
+  };
+
+  // NOT: Portal ziyaretçisinin oturumu yok — oturumlu /api/posts/... route'ları
+  // login'e yönlendiriyordu. Token ile yetkilendirilen /api/client/... kullanılır.
   const approve = async () => {
     setLoading(true);
-    await fetch(`/api/posts/${post.id}/approve`, { method: "POST" });
-    setStatus("approved");
-    setLoading(false);
+    setError(null);
+    try {
+      const res = await fetch(`/api/client/${token}/posts/${post.id}/approve`, { method: "POST" });
+      // Yanıt kontrol edilmeden iyimser güncelleme YAPILMAZ: aksi halde kayıt
+      // olmadığı halde "Onaylandı" gösterilir (sessiz veri kaybı).
+      if (!res.ok) {
+        setError(await errorMessage(res));
+        return;
+      }
+      setStatus("approved");
+    } catch {
+      setError("Bağlantı kurulamadı, internet bağlantınızı kontrol edin.");
+    } finally {
+      setLoading(false);
+    }
   };
 
   const submitRevision = async () => {
     if (!notes.trim()) return;
     setLoading(true);
-    await fetch(`/api/posts/${post.id}/revise`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ revisionNotes: notes }),
-    });
-    setStatus("writing");
-    setNotes("");
-    setShowModal(false);
-    setLoading(false);
+    setError(null);
+    try {
+      const res = await fetch(`/api/client/${token}/posts/${post.id}/revise`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ revisionNotes: notes }),
+      });
+      if (!res.ok) {
+        setError(await errorMessage(res));
+        return;
+      }
+      setStatus("needs_rewrite");
+      setNotes("");
+      setShowModal(false);
+    } catch {
+      setError("Bağlantı kurulamadı, internet bağlantınızı kontrol edin.");
+    } finally {
+      setLoading(false);
+    }
   };
 
   const isApproved  = status === "approved" || status === "published";
@@ -182,6 +224,14 @@ function ClientPostCard({ post, index, brandColor }: { post: Post; index: number
             </div>
           )}
 
+          {/* Hata */}
+          {error && !showModal && (
+            <div className="flex items-start gap-2 rounded-xl border border-red-400/25 bg-red-400/10 px-4 py-3 text-sm text-red-300">
+              <AlertCircle size={15} className="mt-0.5 shrink-0" />
+              <span>{error}</span>
+            </div>
+          )}
+
           {/* Actions */}
           {!isApproved && !isRewriting && (
             <div className="flex gap-3 pt-2">
@@ -229,6 +279,12 @@ function ClientPostCard({ post, index, brandColor }: { post: Post; index: number
                 onChange={(e) => setNotes(e.target.value)}
                 autoFocus
               />
+              {error && (
+                <div className="flex items-start gap-2 rounded-xl border border-red-400/25 bg-red-400/10 px-4 py-3 text-sm text-red-300">
+                  <AlertCircle size={15} className="mt-0.5 shrink-0" />
+                  <span>{error}</span>
+                </div>
+              )}
               <div className="flex gap-3">
                 <button
                   onClick={() => setShowModal(false)}

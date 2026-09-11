@@ -27,5 +27,14 @@ export default auth((req) => {
 export const config = {
   // NOT: "reports" artık dışlanmıyor — rapor PDF'leri public/ dışında tutulur ve
   // yalnızca yetkili API route'ları (authorizePlan / client token) ile servis edilir.
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|logos|images).*)"],
+  //
+  // NOT: "uploads" ve "scraped-products" dışlanır — müşteri portalına token
+  // linkiyle gelen ziyaretçinin oturumu YOKTUR; bu klasörler dışlanmazsa post ve
+  // ürün görselleri /login'e 307 yer ve portal bomboş görünür.
+  // Güvenlik takası: bu dosyalar artık URL'ini bilen herkese açıktır. Kabul
+  // edilebilir, çünkü dosya adları rastgele hex son ek taşır (örn.
+  // 1778105545708-1b473383.jpg) → tahmin edilemez, yani rapor PDF'i ve portal
+  // token'ı ile aynı "capability URL" modeli. Gizli olması gereken bir dosya
+  // asla public/ altına konmamalı, yetkili bir API route'undan stream edilmeli.
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|logos|images|uploads|scraped-products).*)"],
 };

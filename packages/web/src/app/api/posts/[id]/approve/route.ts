@@ -1,8 +1,10 @@
 import { NextResponse } from "next/server";
-import prisma from "@/lib/db";
-import { POST_STATUS } from "@/lib/constants";
 import { authorizePost } from "@/lib/authz";
+import { approvePost } from "@/lib/postActions";
 
+// POST /api/posts/[id]/approve — ajans arayüzü (oturum ile yetkilendirilir).
+// Davranış lib/postActions.ts'te tek yerde durur; müşteri portalının
+// /api/client/[token]/posts/[id]/approve ucu da AYNI fonksiyonu çağırır.
 export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const postId = parseInt(id);
@@ -10,19 +12,6 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   const az = await authorizePost(postId);
   if (!az.ok) return az.error;
 
-  await prisma.post.update({
-    where: { id: postId },
-    data: { status: POST_STATUS.APPROVED },
-  });
-
-  await prisma.agentLog.create({
-    data: {
-      agentName: "Kullanıcı",
-      action: "Post onaylandı.",
-      targetType: "Post",
-      targetId: postId,
-    },
-  });
-
+  await approvePost(postId);
   return NextResponse.json({ ok: true });
 }
