@@ -153,6 +153,9 @@ importers:
       together-ai:
         specifier: ^0.39.0
         version: 0.39.0
+      undici:
+        specifier: ^8.10.2
+        version: 8.10.2
       zod:
         specifier: ^4.3.6
         version: 4.3.6

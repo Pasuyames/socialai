@@ -8,7 +8,7 @@
 > dosya güncellenir. Kapatılan bulgu `[x]` yapılır ve "Değişiklik Günlüğü"ne
 > tarihli bir satır eklenir. Yeni bulgu çıkarsa ilgili önem tablosuna eklenir.
 
-**Son güncelleme:** 2026-09-11 (4. tur — açık bulguların tamamına yakını kapatıldı)
+**Son güncelleme:** 2026-09-11 (5. tur — DNS pinleme + destek/admin uçları sertleştirildi)
 **Son tam inceleme:** 2026-09-08 (kod) · **2026-09-11 (Adım 1→7 canlı uçtan uca test)**
 
 ---
@@ -225,7 +225,10 @@ görselde retry'ın 2./3. turu (QA ilk denemede onayladığı için o dal çalı
   `.gitignore`'a `package-lock.json` + `yarn.lock` engeli eklendi ki tekrar
   sızmasın (Turbopack workspace-root yavaşlığının sebebi buydu).
   `public/scraped-products/` de gitignore'a eklendi.
-- [ ] **O6 — Langfuse hâlâ kapalı.** `.env`'de anahtarlar var ama değerleri
+- [ ] **O6 — Langfuse hâlâ kapalı** (kullanıcının gerçek anahtarını bekliyor).
+  ✅ İyileştirme: boş/placeholder anahtar artık "ayarlanmış" sayılmıyor ve
+  devre dışı kalındığında **bir kez uyarı loglanıyor** — sessiz devre dışılık
+  bir tuzaktı (değerler `""` olduğu için tracing aylarca kapalı kalmıştı). `.env`'de anahtarlar var ama değerleri
   2 karakter (boş tırnak/placeholder) → `getLangfuse()` `null` dönüyor.
   **Kod tarafı %100 hazır, sadece gerçek anahtar bekliyor:**
   `LANGFUSE_PUBLIC_KEY=pk-lf-...` · `LANGFUSE_SECRET_KEY=sk-lf-...` ·
@@ -274,11 +277,16 @@ görselde retry'ın 2./3. turu (QA ilk denemede onayladığı için o dal çalı
 - [ ] **`safeFetch` DNS TOCTOU'ya tam kapalı değil.** `dns.lookup` ile doğrulanan
   IP ile `fetch`'in bağlandığı IP farklı olabilir (rebinding penceresi). Tam
   çözüm: IP'ye bağlanıp `Host` header'ı set etmek veya custom `lookup` hook'u.
-- [ ] **Rate limit bellek-içi.** PM2 cluster veya çok-instance'ta sayaçlar
+- [x] **Rate limit bellek-içi — BİLİNÇLİ, mimariyle tutarlı.** ✅ değerlendirildi
+  `ecosystem.config.js` web'i `instances: 1` çalıştırıyor ve gerekçesi yazılı:
+  *"SQLite + oturum tutarlılığı için tekil"*. Web'i yatay ölçeklemek zaten önce
+  Postgres'e geçmeyi gerektirir. Bugünkü mimaride bellek-içi sayaç **doğru**;
+  Redis'e taşımak login yoluna gereksiz bir arıza noktası ekler (Redis düşerse
+  giriş kırılır). Postgres'e geçildiğinde birlikte ele alınmalı. Eski açıklama: PM2 cluster veya çok-instance'ta sayaçlar
   paylaşılmıyor → limit instance sayısıyla çarpılır. Redis tabanlı limiter gerek.
 - [x] ✅ ÇÖZÜLDÜ — `User.role` şema yorumu `owner|admin|member` diyordu, kod her yerde
   **`superadmin`** kontrol ediyor → dokümantasyon drift'i.
-- [ ] `runningOnboardings` Set'i process-içi; web ve worker ayrı process olduğu
+- [x] ✅ değerlendirildi — `runningOnboardings` Set'i process-içi, AMA onboarding yalnızca web'den tetikleniyor (worker `startPostCreation`/`startImageGenerationWithRetry` çağırıyor) ve web tek instance. Bugün etkili. Yatay ölçeklemede Redis kilidi gerekir. Eski açıklama: web ve worker ayrı process olduğu
   için çift tetiklenme koruması aslında paylaşılmıyor.
 - [ ] `startImageGenerationWithRetry` job içinde 60+120 sn `sleep` yapıyor.
   Kilit yenilendiği için stall olmaz ama bir concurrency slotunu ~3.5 dk tutar.
@@ -452,6 +460,7 @@ cd packages\web ; npx prisma db push ; npx prisma generate
 
 | Tarih | Yapılan |
 |---|---|
+| 2026-09-11 (4) | **DNS rebinding kapatıldı + hiç test edilmemiş yüzeyler.** `safeFetch` artık bağlantıyı doğrulanan IP'ye **pinliyor** (undici `connect.lookup`) → doğrulama ile bağlantı arasındaki TOCTOU penceresi yok; kanıt: toplam **1 DNS sorgusu**, TLS/SNI bozulmadı. Destek biletleri ve admin uçları ilk kez test edildi → **6 + 4 hata** bulundu (şema dışı `priority`/`category` kabul ediliyordu, 5000 karakter sınırsızdı, obje/bozuk JSON **500 ile çökertiyordu**, olmayan kayıt 404 yerine 500) → hepsi Zod ile kapatıldı, 12/12 + 11/11 doğrulandı. Tüm write uçları bozuk-JSON taramasından geçirildi. Langfuse'un sessiz devre dışılığı artık uyarı basıyor. Rate limit ve onboarding kilidi **gerekçeleriyle** ertelendi (web `instances: 1`, SQLite'a bağlı). |
 | 2026-09-11 (3) | **Bağımlılık açıkları: 77 → 1.** `pnpm audit` çalıştırılınca bu dosyadaki "5 high protobufjs" kaydının yanlış olduğu ortaya çıktı: gerçekte **5 KRİTİK + 31 high** vardı ve ikisi kimlik doğrulama katmanındaydı (Next Windows RCE, Next Turbopack proxy bypass, next-auth fail-open, @auth/core homoglyph bypass, sharp libvips CVE'leri). next 16.2.9→16.3.4, next-auth beta.31→beta.32, sharp 0.34.5→0.35.4 + override listesi 4→19. Kritik 0, high 0. Production build başarılı, 20/20 nihai matris, Playwright 5/5. |
 | 2026-09-11 (2) | **Açık bulguların temizliği.** O1 (ürün görseli indirme kodda sabit KAPALIYDI → "ürünü görerek üret" erişilemezdi; iki maliyet profili ayrıştırıldı, canlı doğrulandı: gerçek paket etiketi korunarak 1 görsel üretildi), O9 (middleware→proxy, 18 kontrollük kimlik matrisi), O10 (fail-closed `getScope()`), O11 (DataAnalystV2 kararsızlığının kök sebebi: modelden defter tutma alanı isteniyordu), O12 (tsx), O13 (bakım script'leri ContentWriter'a), O14 (`stripInlineHashtags`, 7 test), revizyon kalite eşiği, `readLimited()` boyut sınırı (4 test), `User.role` şema yorumu. **Playwright ile gerçek tarayıcı portal testi 8/8.** tsc 0 hata, 8 kontrollük regresyon paketi temiz. |
 | 2026-09-11 (1) | **Adım 1→7 uçtan uca canlı test** (görsel: tam 1 adet, kredi kısıtı). 4 KRİTİK bulgu bulundu ve kapatıldı: K4 görseller ölü klasöre yazılıyordu · K5 çapraz-kiracı plan IDOR'u · K6 Publisher sahte "yayınlandı" · K7 gönderi kotası uygulanmıyordu (16/12). Ayrıca O10 fail-open kapsam düzeltildi, `getScope()` eklendi, AgentLog durum türetmesi genişletildi (11 vakalık test), Zod mesajları Türkçeleştirildi. 4 yeni açık bulgu: O11 DataAnalystV2 kararsız · O12 tsx eksik · O13 eski motor script'leri · O14 caption/hashtag çelişkisi. `tsc` 0 hata. |

@@ -65,16 +65,32 @@ const FALLBACK_TIER: Partial<Record<ModelTier, ModelTier>> = {
 // ─── Langfuse Singleton (opsiyonel — env yoksa devre dışı) ───────────────────
 
 let _langfuse: Langfuse | null = null;
+let _langfuseUyarildi = false;
 
 function getLangfuse(): Langfuse | null {
   if (_langfuse) return _langfuse;
-  const pk = process.env.LANGFUSE_PUBLIC_KEY;
-  const sk = process.env.LANGFUSE_SECRET_KEY;
-  if (!pk || !sk) return null;
+
+  // .env'de anahtar SATIRI olup değeri boş/placeholder olabilir (gerçekten
+  // yaşandı: değerler `""` idi ve tracing sessizce kapalı kaldı, kimse fark
+  // etmedi). Boş string'i "ayarlanmış" saymayız ve durumu BİR KEZ loglarız —
+  // sessiz devre dışılık bir tuzaktır.
+  const pk = process.env.LANGFUSE_PUBLIC_KEY?.trim();
+  const sk = process.env.LANGFUSE_SECRET_KEY?.trim();
+  if (!pk || !sk) {
+    if (!_langfuseUyarildi) {
+      _langfuseUyarildi = true;
+      console.warn(
+        "[LLM] Langfuse izleme KAPALI — LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY boş. " +
+        "Token maliyeti ve trace'ler kaydedilmeyecek.",
+      );
+    }
+    return null;
+  }
+
   _langfuse = new Langfuse({
     publicKey: pk,
     secretKey: sk,
-    baseUrl: process.env.LANGFUSE_HOST ?? "https://cloud.langfuse.com",
+    baseUrl: process.env.LANGFUSE_HOST?.trim() || "https://cloud.langfuse.com",
     flushAt: 10,
     flushInterval: 5000,
   });

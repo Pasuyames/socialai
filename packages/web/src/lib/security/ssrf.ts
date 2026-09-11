@@ -1,4 +1,5 @@
 import dns from "dns/promises";
+import { Agent, fetch as undiciFetch } from "undici";
 
 // ─── SSRF Koruması ────────────────────────────────────────────────────────────
 //
@@ -76,24 +77,68 @@ export function assertSafeUrl(rawUrl: string): URL {
 // ─── URL Doğrulama (DNS çözümlemeli — rebinding'e karşı) ──────────────────────
 
 export async function assertSafeUrlResolved(rawUrl: string): Promise<URL> {
+  return (await resolveAndValidate(rawUrl)).url;
+}
+
+/**
+ * URL'i doğrular VE hostname'in çözümlendiği (doğrulanmış) adresleri döndürür.
+ *
+ * Adresleri geri vermek TOCTOU'yu kapatmak için şart: aksi halde bağlantı
+ * kurulurken DNS İKİNCİ kez sorgulanır ve saldırgan, TTL'i sıfırlanmış kendi
+ * alan adında iki sorgu arasında cevabı 127.0.0.1'e çevirerek doğrulamayı
+ * atlatabilir (klasik DNS rebinding penceresi). safeFetch bu listeyi alıp
+ * bağlantıyı TAM OLARAK doğrulanan IP'ye pinler — ikinci bir DNS sorgusu yok.
+ */
+async function resolveAndValidate(
+  rawUrl: string,
+): Promise<{ url: URL; addresses: { address: string; family: number }[] }> {
   const url = assertSafeUrl(rawUrl);
 
-  // Hostname zaten IP değilse çözümle ve dönen tüm IP'leri denetle
   const host = url.hostname.toLowerCase();
-  if (!/^[\d.]+$/.test(host) && !host.includes(":")) {
-    let records: { address: string }[];
-    try {
-      records = await dns.lookup(host, { all: true });
-    } catch {
-      throw new Error("Hostname çözümlenemedi.");
-    }
-    for (const r of records) {
-      if (isPrivateIP(r.address)) {
-        throw new Error("Hostname özel/iç bir IP'ye çözümleniyor (SSRF engellendi).");
-      }
+  const isLiteralIp = /^[\d.]+$/.test(host) || host.includes(":");
+
+  if (isLiteralIp) {
+    // Host zaten IP: assertSafeUrl denetledi, çözümlemeye gerek yok.
+    return { url, addresses: [] };
+  }
+
+  let records: { address: string; family: number }[];
+  try {
+    records = await dns.lookup(host, { all: true });
+  } catch {
+    throw new Error("Hostname çözümlenemedi.");
+  }
+  if (records.length === 0) throw new Error("Hostname çözümlenemedi.");
+
+  for (const r of records) {
+    if (isPrivateIP(r.address)) {
+      throw new Error("Hostname özel/iç bir IP'ye çözümleniyor (SSRF engellendi).");
     }
   }
-  return url;
+  return { url, addresses: records };
+}
+
+/**
+ * Bağlantıyı önceden doğrulanmış IP'lere pinleyen dispatcher.
+ *
+ * undici'nin `connect.lookup` kancası, normalde yapacağı DNS sorgusunun yerine
+ * geçer; buraya YALNIZCA doğrulanmış adresleri veriyoruz. Böylece "doğrulanan
+ * adres" ile "bağlanılan adres" aynı olmak zorunda kalır. TLS, URL'deki gerçek
+ * hostname ile kurulur (SNI ve sertifika doğrulaması bozulmaz) — IP'yi URL'e
+ * yazmak yerine lookup'ı pinlemenin sebebi budur.
+ */
+function pinnedDispatcher(addresses: { address: string; family: number }[]): Agent {
+  return new Agent({
+    connect: {
+      lookup: (_hostname: string, options: any, callback: any) => {
+        if (options?.all) {
+          callback(null, addresses.map((a) => ({ address: a.address, family: a.family })));
+        } else {
+          callback(null, addresses[0].address, addresses[0].family);
+        }
+      },
+    },
+  });
 }
 
 // ─── Güvenli Fetch (redirect'leri her adımda doğrular) ───────────────────────
@@ -102,20 +147,35 @@ export async function safeFetch(rawUrl: string, init: RequestInit = {}): Promise
   let current = rawUrl;
 
   for (let i = 0; i <= MAX_REDIRECTS; i++) {
-    await assertSafeUrlResolved(current);
+    const { addresses } = await resolveAndValidate(current);
 
-    const res = await fetch(current, {
-      ...init,
-      redirect: "manual",
-      signal: init.signal ?? AbortSignal.timeout(FETCH_TIMEOUT),
-      headers: { "User-Agent": UA, ...(init.headers ?? {}) },
-    });
+    // Doğrulanan IP'ye PİNLE (DNS rebinding penceresini kapatır). Host zaten
+    // literal IP ise pinlenecek bir şey yok, normal yol kullanılır.
+    const dispatcher = addresses.length > 0 ? pinnedDispatcher(addresses) : undefined;
 
-    // Yönlendirme varsa hedefi yeniden doğrula
+    let res: Response;
+    try {
+      res = (await undiciFetch(current, {
+        ...(init as any),
+        redirect: "manual",
+        signal: init.signal ?? AbortSignal.timeout(FETCH_TIMEOUT),
+        headers: { "User-Agent": UA, ...((init.headers ?? {}) as any) },
+        ...(dispatcher ? { dispatcher } : {}),
+      } as any)) as unknown as Response;
+    } catch (err) {
+      // Dispatcher hiçbir koşulda bağlantıyı sızdırmasın.
+      await dispatcher?.close().catch(() => {});
+      throw err;
+    }
+
+    // Yönlendirme varsa hedefi yeniden doğrula (ve yeni hedefe yeniden pinle)
     if (res.status >= 300 && res.status < 400) {
       const loc = res.headers.get("location");
       if (!loc) return res;
       current = new URL(loc, current).toString();
+      // Gövde okunmadan atılıyor; bağlantıyı serbest bırak.
+      await res.body?.cancel().catch(() => {});
+      await dispatcher?.close().catch(() => {});
       continue;
     }
     return res;
