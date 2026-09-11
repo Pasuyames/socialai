@@ -136,10 +136,18 @@ export class ContentWriterAgent {
         onUsage: (u) => { usage = u; },
       });
 
+      // Prompt iki yerde "Hashtag GÖMME" diyor ama model her zaman uymuyor:
+      // canlı testte aynı gönderinin ilk üretiminde caption'da "#BademUnu"
+      // gömülüydü, revizyonunda gömülü değildi — yani çıktı TUTARSIZ. Şema
+      // caption'ı "sadece gövde metin" olarak tanımlıyor ve arayüz hashtag'leri
+      // zaten ayrı çip olarak gösteriyor, dolayısıyla gömülü olanlar mükerrer.
+      // Prompt bir garanti değildir; kod tarafında zorlanır.
+      const { caption, stripped } = stripInlineHashtags(content.caption.trim());
+
       await prisma.post.update({
         where: { id: postId },
         data: {
-          caption:       content.caption.trim(),
+          caption,
           hook:          content.hook.trim(),
           hashtags:      content.hashtags.map(normalizeHashtag).join(" "),
           status:        POST_STATUS.WRITING,
@@ -148,7 +156,8 @@ export class ContentWriterAgent {
       });
 
       const tok = usage ? ` (${(usage as TokenUsage).total} token)` : "";
-      await this.log(postId, `İçerik üretildi${tok}: ${content.hashtags.length} hashtag, hook hazır.`);
+      const strip = stripped > 0 ? `, ${stripped} gömülü hashtag metne çevrildi` : "";
+      await this.log(postId, `İçerik üretildi${tok}: ${content.hashtags.length} hashtag, hook hazır${strip}.`);
       return true;
 
     } catch (err: any) {
@@ -261,4 +270,36 @@ GÖREV:
 function normalizeHashtag(tag: string): string {
   const t = tag.trim().replace(/^#+\s*/, "").replace(/\s+/g, "");
   return t ? `#${t}` : "";
+}
+
+/**
+ * Caption'a gömülmüş hashtag'leri okunabilir metne çevirir.
+ *
+ * Etiketi tamamen SİLMEK cümleyi bozardı ("#BademUnu ile hazırladığımız" →
+ * " ile hazırladığımız"), o yüzden yalnızca "#" kaldırılır ve camelCase
+ * sınırlarından boşlukla ayrılır:
+ *     "#BademUnu ile"       → "Badem Unu ile"
+ *     "#Glutensiz kek"      → "Glutensiz kek"
+ *     "#YuzdeYuzGidaTEST"   → "Yuzde Yuz Gida TEST"
+ *
+ * Türkçe harfler korunur (\p{L}); rakam-harf ve küçük-büyük geçişleri bölünür.
+ */
+export function stripInlineHashtags(caption: string): { caption: string; stripped: number } {
+  let stripped = 0;
+
+  const out = caption.replace(/#([\p{L}\p{N}_]+)/gu, (_m, word: string) => {
+    stripped++;
+    return String(word)
+      .replace(/_/g, " ")
+      // küçük harf/rakam → büyük harf sınırında böl (BademUnu → Badem Unu)
+      .replace(/(\p{Ll}|\p{N})(\p{Lu})/gu, "$1 $2")
+      // ardışık büyük harf bloğundan sonra gelen kelime (TESTUrun → TEST Urun)
+      .replace(/(\p{Lu}+)(\p{Lu}\p{Ll})/gu, "$1 $2")
+      .trim();
+  });
+
+  // Etiket kaldırılınca oluşabilen çift boşluk / boşluk-noktalama temizliği
+  const cleaned = out.replace(/[ \t]{2,}/g, " ").replace(/\s+([,.!?;:])/g, "$1").trim();
+
+  return { caption: cleaned, stripped };
 }

@@ -1,7 +1,11 @@
 /**
- * Direct retry script for stuck posts.
- * Usage: tsx retry-post.ts <postId>
- * Runs: Copywriter → EditorInChief → EngagementSpecialist → PromptEngineer
+ * Takılı kalmış bir gönderiyi yeniden işler.
+ * Kullanım: pnpm exec tsx retry-post.ts <postId>
+ *
+ * Çalıştırdığı hat (Orchestrator.startPostCreation):
+ *   ContentWriter → EditorInChief ⟲ → VisualInspiration → PromptEngineer
+ * (Eski yorum "Copywriter → EngagementSpecialist" diyordu; o iki ajanın yerini
+ *  birleşik ContentWriter motoru aldı ve ikisi de kod tabanından kaldırıldı.)
  */
 
 import "dotenv/config";

@@ -1,7 +1,11 @@
 import fs from "fs";
 import path from "path";
 import { generateTextWithVision } from "../llm";
-import { safeFetch } from "../security/ssrf";
+import { safeFetch, readLimited } from "../security/ssrf";
+
+// Dış sitelerden indirilen gövdeler için üst sınırlar (bellek şişirme koruması).
+const MAX_TEXT_BYTES  = 5 * 1024 * 1024;  // HTML / sitemap
+const MAX_IMAGE_BYTES = 8 * 1024 * 1024;  // ürün paketi görseli
 
 // ─── Tipler ───────────────────────────────────────────────────────────────────
 
@@ -366,7 +370,12 @@ async function fetchText(url: string): Promise<string | null> {
       signal: AbortSignal.timeout(FETCH_TIMEOUT),
     });
     if (!res.ok) return null;
-    return await res.text();
+    // Boyut sınırı: safeFetch nereye bağlanıldığını denetler, ne kadar
+    // indirildiğini değil. Taranan site bizim kontrolümüzde olmadığı için
+    // sınırsız okuma bellek şişirmeye açıktır. 5 MB bir HTML/sitemap için
+    // fazlasıyla yeterli.
+    const body = await readLimited(res, MAX_TEXT_BYTES);
+    return body.toString("utf8");
   } catch {
     return null;
   }
@@ -389,7 +398,8 @@ async function downloadImage(imageUrl: string, productUrl: string, dir: string):
   const rawExt  = path.extname(new URL(imageUrl).pathname) || ".jpg";
   const file    = safeFilename(rawSlug, rawExt);
 
-  const buffer = Buffer.from(await res.arrayBuffer());
+  // Üst sınır: kötü niyetli/bozuk bir sunucu gigabaytlarca veri akıtabilir.
+  const buffer = await readLimited(res, MAX_IMAGE_BYTES);
   if (buffer.length < 1000) return null; // bozuk/boş görsel
 
   // path traversal'a karşı son güvence: hedef dizin içinde kaldığını doğrula

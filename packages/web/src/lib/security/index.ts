@@ -13,6 +13,8 @@ export {
   assertSafeUrl,         // yapısal URL doğrulama (protokol + statik özel IP/host)
   assertSafeUrlResolved, // + DNS çözümleyip dönen IP'leri denetler (rebinding)
   safeFetch,             // her redirect adımını yeniden doğrulayan güvenli fetch
+  readLimited,           // gövdeyi boyut sınırıyla oku — safeFetch BOYUT denetlemez
+  DEFAULT_MAX_BYTES,
 } from "./ssrf";
 
 // Prompt injection azaltma: güvenilmez metni temizle + XML-benzeri etiketle çitle

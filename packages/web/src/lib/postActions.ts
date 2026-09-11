@@ -103,6 +103,36 @@ export async function requestRevision(postId: number, revisionNotes: string): Pr
     if (!ok1) return;
     const ok2 = await new EditorInChiefAgent().execute(postId);
     if (!ok2) return;
+
+    // KALİTE EŞİĞİ — eskiden burada koşulsuz CLIENT_REVIEW yazılıyordu.
+    // EditorInChief `true` dönse bile postu NEEDS_REWRITE'ta bırakmış olabilir
+    // (metin eşiği geçemedi demektir). Koşulsuz geçiş, denetimden KALAN metnin
+    // müşteriye gitmesine yol açıyordu. Orchestrator ana hatta bu durumu
+    // NEEDS_HUMAN'a düşürerek doğru yönetiyor; revizyon yolu artık aynı kuralı
+    // uyguluyor. Burada yeniden denemiyoruz: müşteri zaten bir not verdi, ikinci
+    // bir otomatik tur hem maliyet hem de aynı sonucu verme riski taşır — insan
+    // baksın.
+    const after = await prisma.post.findUnique({
+      where:  { id: postId },
+      select: { status: true },
+    });
+
+    if (after?.status === POST_STATUS.NEEDS_REWRITE) {
+      await prisma.post.update({
+        where: { id: postId },
+        data:  { status: POST_STATUS.NEEDS_HUMAN },
+      });
+      await prisma.agentLog.create({
+        data: {
+          agentName:  "Revizyon Akışı",
+          action:     "KRİTİK: Revize edilen metin kalite eşiğini geçemedi — insan müdahalesi gerekiyor.",
+          targetType: "Post",
+          targetId:   postId,
+        },
+      });
+      return;
+    }
+
     await prisma.post.update({
       where: { id: postId },
       data: { status: POST_STATUS.CLIENT_REVIEW },

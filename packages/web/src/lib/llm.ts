@@ -1,7 +1,10 @@
 import { GoogleGenAI } from "@google/genai";
 import { z } from "zod";
 import { Langfuse } from "langfuse";
-import { safeFetch } from "./security/ssrf";
+import { safeFetch, readLimited } from "./security/ssrf";
+
+/** Vision'a verilecek tek görsel için üst sınır — DoS/bellek şişirme koruması. */
+const MAX_VISION_IMAGE_BYTES = 8 * 1024 * 1024; // 8 MB
 
 // ─── Model Seviyeleri ─────────────────────────────────────────────────────────
 //
@@ -341,8 +344,13 @@ export async function generateTextWithVision(
       const res  = await safeFetch(url, { signal: AbortSignal.timeout(10_000) });
       if (!res.ok) continue;
       const mime = res.headers.get("content-type")?.split(";")[0] ?? "image/jpeg";
-      const buf  = await res.arrayBuffer();
-      imageParts.push({ inlineData: { mimeType: mime, data: Buffer.from(buf).toString("base64") } });
+      // Boyut sınırı ŞART: safeFetch NEREYE bağlanıldığını denetler, NE KADAR
+      // indirildiğini değil. Sınırsız arrayBuffer() ile dış kontrollü bir URL
+      // devasa yanıt döndürüp süreci şişirebilirdi. 8 MB bir sosyal medya
+      // görseli için fazlasıyla yeterli; aşan görsel aşağıdaki catch'e düşüp
+      // sessizce atlanır.
+      const buf = await readLimited(res, MAX_VISION_IMAGE_BYTES);
+      imageParts.push({ inlineData: { mimeType: mime, data: buf.toString("base64") } });
     } catch (err: any) {
       // Tek bir görselin inememesi pipeline'ı çökertmemeli — sessizce atlanır.
       // Ama engellenen/başarısız URL'ler görünmez kalmasın: URL'in tamamını

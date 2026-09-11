@@ -25,7 +25,12 @@ model User {
   email          String       @unique
   passwordHash   String?
   name           String?
-  role           String       @default("member") // owner | admin | member
+  // owner | admin | member | superadmin
+  // NOT: "superadmin" platform yöneticisidir (organizasyondan bağımsız, tüm
+  // kaynaklara erişir). Kod TEK BU DEĞERİ kontrol eder (authz.ts, /admin/*);
+  // owner/admin/member şu an yetki açısından ayrışmaz. Eski yorum superadmin'i
+  // hiç listelemiyordu ve şema okurken yanıltıyordu.
+  role           String       @default("member")
   organizationId Int
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   sessions       Session[]

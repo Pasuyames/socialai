@@ -1,3 +1,9 @@
+// ─── Kimlik Kapısı (Next 16 "proxy" dosya konvansiyonu) ──────────────────────
+//
+// Bu dosya eskiden src/middleware.ts idi. Next 16.2.9 "middleware" konvansiyonunu
+// deprecate edip yerine "proxy"yi koydu (dev sunucusu her açılışta uyarıyordu);
+// imza ve davranış aynı, yalnızca dosya adı değişti. Gelecek bir major'da eski ad
+// tamamen kalkacağı için şimdiden taşındı.
 import { auth } from "@/lib/auth";
 import { NextResponse } from "next/server";
 

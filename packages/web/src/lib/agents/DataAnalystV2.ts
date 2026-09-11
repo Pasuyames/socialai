@@ -4,7 +4,18 @@ import prisma from "../db";
 
 // ─── Zod Şeması ───────────────────────────────────────────────────────────────
 
-const TrendReportSchema = z.object({
+const AGENT_VERSION = "v2.1";
+
+// Modelden İSTENEN alanlar — yalnızca içerik.
+//
+// agentVersion ve generatedAt eskiden BU ŞEMADAYDI ve prompt modelden
+// `"agentVersion": "v2.1"` ile bir ISO zaman damgası yazmasını istiyordu. Bunlar
+// içerik değil defter tutma alanları: model "v2" yazdığında, alanı atladığında
+// veya zaman damgasını biçimsiz döndürdüğünde Zod TÜM yanıtı reddedip iki
+// denemeyi de yakıyordu. Canlı testte ajan aynı girdiyle bir çalışmada başarılı,
+// diğerinde "2 denemede de geçerli JSON üretilemedi" veriyordu — sebebi buydu.
+// Artık bu iki alanı KOD dolduruyor, model yalnızca içerikten sorumlu.
+const TrendContentSchema = z.object({
   pastPerformanceInsights: z.string(),
   doThisMonth: z.array(z.string()).min(2).max(5),
   avoidThisMonth: z.array(z.string()).min(1).max(6),
@@ -16,11 +27,12 @@ const TrendReportSchema = z.object({
     reachGrowth: z.string(),
     postFrequency: z.string(),
   }),
-  agentVersion: z.literal("v2.1"),
-  generatedAt:  z.string(),
 });
 
-export type TrendReport = z.infer<typeof TrendReportSchema>;
+export type TrendReport = z.infer<typeof TrendContentSchema> & {
+  agentVersion: string;
+  generatedAt: string;
+};
 
 // ─── Ajan ─────────────────────────────────────────────────────────────────────
 
@@ -74,10 +86,17 @@ export class DataAnalystV2Agent {
 
       const prompt = this.buildPrompt(plan, strategy, pastText);
 
-      const report = await generateJSON(prompt, TrendReportSchema, {
+      const content = await generateJSON(prompt, TrendContentSchema, {
         tier: "balanced",
         taskName: this.agentName,
       });
+
+      // Defter tutma alanlarını model değil KOD doldurur (bkz. şema yorumu).
+      const report: TrendReport = {
+        ...content,
+        agentVersion: AGENT_VERSION,
+        generatedAt:  new Date().toISOString(),
+      };
 
       await prisma.monthlyPlan.update({
         where: { id: planId },
@@ -107,7 +126,7 @@ HEDEF KİTLE: ${JSON.stringify(strategy.targetAudience ?? {})}
 GEÇMİŞ PERFORMANS:
 ${pastText}
 
-SADECE JSON dön. agentVersion alanı tam olarak "v2.1" olmalı:
+SADECE JSON dön:
 
 {
   "pastPerformanceInsights": "Geçmiş veriden çıkarılan tek paragraflık stratejik içgörü",
@@ -120,9 +139,7 @@ SADECE JSON dön. agentVersion alanı tam olarak "v2.1" olmalı:
     "engagementRate": "Hedef etkileşim oranı (Örn: %4-6)",
     "reachGrowth": "Hedef erişim büyümesi (Örn: %15)",
     "postFrequency": "Haftalık gönderi hedefi (Örn: 4-5 gönderi/hafta)"
-  },
-  "agentVersion": "v2.1",
-  "generatedAt": "${new Date().toISOString()}"
+  }
 }`;
   }
 

@@ -122,3 +122,46 @@ export async function safeFetch(rawUrl: string, init: RequestInit = {}): Promise
   }
   throw new Error("Çok fazla yönlendirme (olası SSRF).");
 }
+
+// ─── Boyut Sınırlı Gövde Okuma ───────────────────────────────────────────────
+//
+// safeFetch YALNIZCA nereye bağlanıldığını denetler, ne kadar veri indirildiğini
+// DEĞİL. Çağıranlar gövdeyi doğrudan belleğe alıyordu (res.arrayBuffer()), yani
+// dış kontrollü bir URL devasa bir yanıt döndürerek süreci şişirebilirdi (DoS).
+// Content-Length yalanabildiği için akış da ayrıca sayılır.
+export const DEFAULT_MAX_BYTES = 10 * 1024 * 1024; // 10 MB
+
+export async function readLimited(
+  res: Response,
+  maxBytes: number = DEFAULT_MAX_BYTES,
+): Promise<Buffer> {
+  // Ucuz ön eleme: sunucu dürüstse burada erken çıkarız.
+  const declared = Number(res.headers.get("content-length") ?? "");
+  if (Number.isFinite(declared) && declared > maxBytes) {
+    throw new Error(`Yanıt çok büyük (${declared} bayt > ${maxBytes}).`);
+  }
+
+  if (!res.body) return Buffer.alloc(0);
+
+  const reader = res.body.getReader();
+  const chunks: Buffer[] = [];
+  let total = 0;
+
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      // Gerçek boyut sınırı: Content-Length'e güvenilmez, akış sayılır.
+      if (total > maxBytes) {
+        throw new Error(`Yanıt çok büyük (>${maxBytes} bayt) — indirme durduruldu.`);
+      }
+      chunks.push(Buffer.from(value));
+    }
+  } finally {
+    // Sınır aşımında bağlantıyı bırakma; aksi halde indirme arka planda sürer.
+    await reader.cancel().catch(() => {});
+  }
+
+  return Buffer.concat(chunks, total);
+}
