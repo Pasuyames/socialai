@@ -32,8 +32,15 @@ gcp-*.json
 
 # ── GİZLİ: üretilmiş içerik / müşteri verisi ──────────────
 packages/web/public/uploads/
+packages/web/public/scraped-products/
 packages/web/storage/
 packages/web/public/reports/
+
+# ── Başıboş lockfile: pnpm monorepo'da npm/yarn lockfile, Turbopack'in
+#    workspace kökünü yanlış seçmesine ve derlemenin dakikalarca sürmesine
+#    yol açıyor. Tek geçerli lockfile: kökteki pnpm-lock.yaml ──
+package-lock.json
+yarn.lock
 
 # ── Loglar ────────────────────────────────────────────────
 *.log

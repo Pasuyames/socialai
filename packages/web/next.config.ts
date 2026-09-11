@@ -1,6 +1,11 @@
 import type { NextConfig } from "next";
+import path from "path";
 
 const isDev = process.env.NODE_ENV !== "production";
+
+// Turbopack workspace kökü — aksi halde ev dizinindeki başıboş bir lockfile
+// yüzünden Next tüm C:\Users\musta\ ağacını tarar ve derleme dakikalarca sürer.
+const monorepoRoot = path.resolve(process.cwd(), "..", "..");
 
 // Content-Security-Policy — Next App Router ile uyumlu temel politika.
 // Next satır-içi script/stil enjekte ettiği için 'unsafe-inline' gerekir;
@@ -33,6 +38,7 @@ const securityHeaders = [
 
 const nextConfig: NextConfig = {
   transpilePackages: ['@socialai/common'],
+  turbopack: { root: monorepoRoot }, // derleme yavaşlığını önle (doğru workspace kökü)
   poweredByHeader: false, // X-Powered-By başlığını gizle (teknoloji parmak izi)
   async headers() {
     return [{ source: "/:path*", headers: securityHeaders }];
