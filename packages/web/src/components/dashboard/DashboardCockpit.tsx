@@ -8,7 +8,7 @@ import {
   Sparkles, ImageIcon,
 } from "lucide-react";
 import { BentoGrid, BentoCard } from "@/components/ui/Bento";
-import { AnimatedCounter } from "@/components/dashboard/AnimatedCounter";
+import { AnimatedCounter, paraOndaligi } from "@/components/dashboard/AnimatedCounter";
 import { StatusBadge } from "@/components/ui/Badge";
 import { cn } from "@/lib/cn";
 
@@ -185,8 +185,14 @@ export function DashboardCockpit({ data }: { data: CockpitData }) {
             <div className="space-y-4">
               <div>
                 <p className="text-[11px] uppercase tracking-wider text-muted-foreground">Maliyet (7g)</p>
+                {/* Ondalık uyarlanabilir: sabit 2 basamakta $0,0000101 gibi
+                    gerçek LLM maliyetleri "$0,00" görünüyordu (bkz. paraOndaligi). */}
                 <p className="text-3xl font-bold text-white">
-                  <AnimatedCounter value={langfuse.totalCostUsd} decimals={2} prefix="$" />
+                  <AnimatedCounter
+                    value={langfuse.totalCostUsd}
+                    decimals={paraOndaligi(langfuse.totalCostUsd)}
+                    prefix="$"
+                  />
                 </p>
               </div>
               <div className="grid grid-cols-2 gap-3">

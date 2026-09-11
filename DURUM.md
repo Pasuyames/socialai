@@ -8,7 +8,7 @@
 > dosya güncellenir. Kapatılan bulgu `[x]` yapılır ve "Değişiklik Günlüğü"ne
 > tarihli bir satır eklenir. Yeni bulgu çıkarsa ilgili önem tablosuna eklenir.
 
-**Son güncelleme:** 2026-09-11 (6. tur — retry sınıflandırma, otomatik yenileme, log temizliği)
+**Son güncelleme:** 2026-09-11 (7. tur — Langfuse aktif, maliyet görünürlüğü)
 **Son tam inceleme:** 2026-09-08 (kod) · **2026-09-11 (Adım 1→7 canlı uçtan uca test)**
 
 ---
@@ -225,7 +225,27 @@ görselde retry'ın 2./3. turu (QA ilk denemede onayladığı için o dal çalı
   `.gitignore`'a `package-lock.json` + `yarn.lock` engeli eklendi ki tekrar
   sızmasın (Turbopack workspace-root yavaşlığının sebebi buydu).
   `public/scraped-products/` de gitignore'a eklendi.
-- [ ] **O6 — Langfuse hâlâ kapalı** (kullanıcının gerçek anahtarını bekliyor).
+- [x] **O6 — Langfuse AKTİF.** ✅ ÇÖZÜLDÜ 2026-09-11
+  Anahtarlar girildi, uçtan uca doğrulandı (tek küçük test çağrısı):
+  `model gemini-2.5-flash · token 17/2/45 · maliyet $0,0000101 · süre 1,8 sn`.
+  **Açarken 4 kusur çıktı ve düzeltildi:**
+  1. `getLangfuseMetrics()` `fromTimestamp`'i `YYYY-MM-DD` gönderiyordu; API tam
+     ISO istiyor → **her istek 400** → dashboard geçerli anahtarla bile
+     "bağlı değil" gösterirdi (canlı kanıt: tarih-only 400, ISO 200).
+  2. Kullanılan uç nokta **deprecate** (16 Kasım 2026'da kalkıyor, 10 dk
+     gecikmeli) → `/api/public/v2/metrics`'e geçildi.
+  3. Langfuse'un kurulum ekranı `LANGFUSE_BASE_URL` üretiyor, kod `LANGFUSE_HOST`
+     okuyordu → ikisi de kabul ediliyor (self-hosted'da veri yanlış sunucuya
+     gitmeye çalışırdı).
+  4. Maliyet kartı sabit 2 ondalıkla **$0,00** gösteriyordu → `paraOndaligi()`
+     ile uyarlanabilir basamak; artık **$0,000010**.
+  **Bonus:** `AnimatedCounter` artık değeri "0"dan değil hedeften başlatıyor
+  (animasyon hiç çalışmazsa kullanıcı kalıcı 0 görüyordu) ve "hareketi azalt"
+  açıkken **JSX ağacını değiştirmeden** animasyonu atlıyor.
+  **Doğrulama:** normal + reduced-motion modlarında 12/12 tarayıcı testi;
+  metrik toplaması ~5 dk sonra yansıdı (Langfuse tarafı gecikme, bizde sorun yok).
+  > ⚠️ Prompt'lar ve model çıktıları artık Langfuse'a gidiyor — gerçek müşteri
+  > verisiyle çalışırken bu bilinçli bir karar olmalı (self-hosted seçeneği var).
   ✅ İyileştirme: boş/placeholder anahtar artık "ayarlanmış" sayılmıyor ve
   devre dışı kalındığında **bir kez uyarı loglanıyor** — sessiz devre dışılık
   bir tuzaktı (değerler `""` olduğu için tracing aylarca kapalı kalmıştı). `.env`'de anahtarlar var ama değerleri
