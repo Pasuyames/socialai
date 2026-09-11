@@ -90,7 +90,14 @@ function getLangfuse(): Langfuse | null {
   _langfuse = new Langfuse({
     publicKey: pk,
     secretKey: sk,
-    baseUrl: process.env.LANGFUSE_HOST?.trim() || "https://cloud.langfuse.com",
+    // Langfuse'un kendi kurulum ekranı `LANGFUSE_BASE_URL` üretiyor, bizim
+    // yapılandırmamız `LANGFUSE_HOST` kullanıyordu. Snippet'i olduğu gibi
+    // yapıştıran biri sessizce varsayılana düşerdi (self-hosted kurulumda
+    // veri YANLIŞ sunucuya gitmeye çalışırdı) — iki isim de kabul edilir.
+    baseUrl:
+      process.env.LANGFUSE_HOST?.trim() ||
+      process.env.LANGFUSE_BASE_URL?.trim() ||
+      "https://cloud.langfuse.com",
     flushAt: 10,
     flushInterval: 5000,
   });

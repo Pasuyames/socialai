@@ -62,16 +62,44 @@ export async function getQueueCounts(): Promise<QueueCounts> {
  * Public metrics API'sine Basic auth ile gider; hata/timeout → null.
  */
 export async function getLangfuseMetrics(): Promise<LangfuseMetrics | null> {
-  const pk = process.env.LANGFUSE_PUBLIC_KEY;
-  const sk = process.env.LANGFUSE_SECRET_KEY;
-  const host = process.env.LANGFUSE_HOST ?? "https://cloud.langfuse.com";
+  // trim(): .env'de anahtar satırı olup değeri boş tırnak olabiliyor — boş
+  // string "ayarlanmış" sayılmamalı (aylarca sessizce kapalı kalmıştı).
+  const pk = process.env.LANGFUSE_PUBLIC_KEY?.trim();
+  const sk = process.env.LANGFUSE_SECRET_KEY?.trim();
+  // Langfuse kurulum ekranı LANGFUSE_BASE_URL üretiyor; ikisi de kabul edilir
+  // (bkz. lib/llm.ts getLangfuse — aynı gerekçe).
+  const host =
+    process.env.LANGFUSE_HOST?.trim() ||
+    process.env.LANGFUSE_BASE_URL?.trim() ||
+    "https://cloud.langfuse.com";
   if (!pk || !sk) return null;
 
   try {
-    const from = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
-      .toISOString().slice(0, 10);
+    const fromDate = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
     const auth = Buffer.from(`${pk}:${sk}`).toString("base64");
-    const url = `${host.replace(/\/$/, "")}/api/public/metrics/daily?fromTimestamp=${from}`;
+
+    // ── v2/metrics ──────────────────────────────────────────────────────────
+    // Eskiden `/api/public/metrics/daily?fromTimestamp=YYYY-MM-DD` çağrılıyordu.
+    // İKİ sorun vardı:
+    //   1) API TAM ISO zaman damgası istiyor; tarih-only gövde 400 döndürüyordu.
+    //      res.ok false olduğu için fonksiyon null dönüyor ve dashboard, geçerli
+    //      anahtarlarla bile "Langfuse metrikleri bağlı değil" gösteriyordu —
+    //      sessiz bir hata (canlı doğrulandı: tarih-only 400, tam ISO 200).
+    //   2) O uç nokta Langfuse Cloud'da DEPRECATE; 16 Kasım 2026'da kaldırılıyor
+    //      ve verisi ~10 dakika gecikmeli. v2 gerçek zamanlı.
+    const query = {
+      view: "observations",
+      metrics: [
+        { measure: "totalCost",   aggregation: "sum" },
+        { measure: "totalTokens", aggregation: "sum" },
+        { measure: "count",       aggregation: "count" },
+      ],
+      fromTimestamp: fromDate.toISOString(),
+      toTimestamp:   new Date().toISOString(),
+    };
+    const url =
+      `${host.replace(/\/$/, "")}/api/public/v2/metrics` +
+      `?query=${encodeURIComponent(JSON.stringify(query))}`;
 
     const res = await withTimeout(
       fetch(url, { headers: { Authorization: `Basic ${auth}` }, cache: "no-store" }),
@@ -81,16 +109,14 @@ export async function getLangfuseMetrics(): Promise<LangfuseMetrics | null> {
     if (!res || !res.ok) return null;
 
     const json = await res.json();
-    const days: any[] = json?.data ?? [];
-    let totalTokens = 0, totalCostUsd = 0, traces = 0;
-    for (const d of days) {
-      totalCostUsd += Number(d?.totalCost ?? 0);
-      traces       += Number(d?.countTraces ?? 0);
-      for (const u of d?.usage ?? []) {
-        totalTokens += Number(u?.totalUsage ?? 0);
-      }
-    }
-    return { totalTokens, totalCostUsd, traces, fromDate: from };
+    // Değerler string ya da null gelebiliyor (ör. {"sum_totalCost":null}).
+    const row: any = json?.data?.[0] ?? {};
+    return {
+      totalTokens:  Number(row.sum_totalTokens ?? 0) || 0,
+      totalCostUsd: Number(row.sum_totalCost   ?? 0) || 0,
+      traces:       Number(row.count_count     ?? 0) || 0,
+      fromDate:     fromDate.toISOString().slice(0, 10),
+    };
   } catch {
     return null;
   }
