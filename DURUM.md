@@ -8,7 +8,7 @@
 > dosya güncellenir. Kapatılan bulgu `[x]` yapılır ve "Değişiklik Günlüğü"ne
 > tarihli bir satır eklenir. Yeni bulgu çıkarsa ilgili önem tablosuna eklenir.
 
-**Son güncelleme:** 2026-09-11 (3. tur — uçtan uca canlı test + 5 yeni düzeltme)
+**Son güncelleme:** 2026-09-11 (4. tur — açık bulguların tamamına yakını kapatıldı)
 **Son tam inceleme:** 2026-09-08 (kod) · **2026-09-11 (Adım 1→7 canlı uçtan uca test)**
 
 ---
@@ -19,10 +19,11 @@
 |---|---|
 | **Konum** | `C:\Users\musta\Projects\SocialAI` |
 | **Dev portu** | **3001** (`packages/web` → `pnpm dev` → `next dev -p 3001`) |
-| **Stack** | Next.js 16.2.9 (App Router + Turbopack), TypeScript, pnpm monorepo |
+| **Stack** | Next.js **16.3.4** (App Router + Turbopack), TypeScript, pnpm monorepo |
 | **DB** | Prisma 5.22 + SQLite → **`packages/web/prisma/dev.db`** (491 KB, canlı) |
 | **Kuyruk** | BullMQ + Redis 7 (Docker konteyner `socialai-redis`, host portu **6380**) |
-| **Auth** | NextAuth v5 (JWT, Credentials), rol: `superadmin` / diğer |
+| **Auth** | NextAuth v5 **beta.32** (JWT, Credentials), rol: `superadmin` / diğer |
+| **Kimlik kapısı** | `src/proxy.ts` (Next 16'da `middleware.ts` deprecate edildi) |
 | **LLM** | Google Vertex AI (Gemini 2.5-flash / 2.5-pro) |
 | **Görsel** | Google AI Studio — **Nano Banana 2** (`gemini-3.1-flash-image`), **2K** |
 | **Paketler** | `packages/web`, `packages/worker`, `packages/common` |
@@ -48,7 +49,7 @@ Renza:3000 · **SocialAI:3001** · BekoAI:3002 · UpmindClone:3003 · Affa:3004 
 ## 2.5 UÇTAN UCA CANLI TEST — 2026-09-11 (Adım 1 → 7)
 
 Tüm akış gerçek API'lerle çalıştırıldı. **Görsel üretimi kredi kısıtı nedeniyle
-TAM 1 adetle** test edildi (retry döngüsü kasıtlı olarak atlandı).
+toplam 2 adetle** test edildi (biri metin→görsel, biri ürün referanslı).
 
 | Adım | Ne test edildi | Sonuç |
 |---|---|---|
@@ -61,10 +62,13 @@ TAM 1 adetle** test edildi (retry döngüsü kasıtlı olarak atlandı).
 | 7 | Publisher | ⚠️ sahte yayın bulundu → düzeltildi (bkz. K4) |
 | + | Revizyon akışı (`postActions.ts`) | ✅ not uygulandı: emoji 1→4, ton yumuşadı |
 | + | Org izolasyonu, plan limitleri, portal kapısı, SSRF | ✅ hepsi doğrulandı |
+| 4b | **Ürün referanslı üretim + QA retry döngüsü** | ✅ referans mod devreye girdi, QA 1. denemede geçti (85/100) → 1 görsel |
+| + | **Müşteri portalı — GERÇEK TARAYICI** (Playwright) | ✅ 8/8; görseller gerçekten render oldu (1080×1350), konsol hatası yok, onay DB'ye yazıldı |
 
-**Hâlâ test EDİLMEYEN:** görsel retry/QA döngüsü (3 denemeye kadar — kasıtlı
-atlandı, maliyet), müşteri portalının tarayıcıda gerçek akışı (yalnızca curl ile
-uç testi yapıldı), Instagram/LinkedIn'e GERÇEK yayın (kimlik bilgisi yok).
+**Hâlâ test EDİLMEYEN:** Instagram/LinkedIn'e **gerçek yayın** (kimlik bilgisi
+yok — yalnızca reddetme ve simülasyon yolları test edildi) · **yük/eşzamanlılık**
+(tek kullanıcı, tek post ile test edildi) · QA'nın gerçekten **reddettiği** bir
+görselde retry'ın 2./3. turu (QA ilk denemede onayladığı için o dal çalışmadı).
 
 ---
 
@@ -173,12 +177,26 @@ uç testi yapıldı), Instagram/LinkedIn'e GERÇEK yayın (kimlik bilgisi yok).
 
 ### 🟡 ORTA
 
-- [ ] **O1 — Ürün kataloğu boş.** `public/scraped-products` **0 dosya**. DB'de
-  2 post `productImagePath` taşıyor ama dosyalar yok → ImageGenerator sessizce
-  metin→görsele düşüyor. **"Ürünü görerek üret" özelliği şu an fiilen kapalı.**
-  **Çözüm:** `/api/brands/[id]/sync-products` yeniden çalıştır.
-  ⚠️ **Kullanıcı onayı bekliyor** — ürün görsellerini Gemini Vision ile analiz
-  ediyor, yani LLM maliyeti var.
+- [x] **O1 — "Ürünü görerek üret" özelliği erişilemezdi.** ✅ ÇÖZÜLDÜ 2026-09-11
+  Sebep bir "boş klasör" değil, **kodda sabitlenmiş bayraklardı**:
+  `scrapeProductCatalog(url, { images: false })` ve
+  `curateCatalog(..., { analyzeImages: false })` çağrı yerinde hardcoded'dı →
+  `sync-products` ucu hiçbir koşulda paket görseli indiremiyordu → PromptEngineer'in
+  atadığı `productImagePath` diskte bulunamıyor → ImageGenerator sessizce
+  metin→görsele düşüyordu.
+  **Düzeltme:** iki bayrak ayrıştırıldı — `downloadImages` (HTTP+disk, **LLM
+  maliyeti YOK**, varsayılan AÇIK) ve `analyzeImages` (ürün başına Vision
+  çağrısı, **ücretli**, varsayılan KAPALI, gövdede `{"analyzeImages":true}` ile
+  açılır).
+  > 📌 **DÜZELTME:** görseller `public/scraped-products`'ta **değil**,
+  > `public/uploads/products/` altında. Önceki "katalog boş" teşhisi yanlış
+  > klasöre bakıyordu; `scraped-products` kullanılmayan boş bir kalıntı.
+  **Doğrulama:** 13 ürün → 12 paket görseli indirildi (HTTP 200 `image/webp`) ·
+  tam akış çalıştırıldı, **ürün referanslı mod devreye girdi** (dosya öneki
+  `product-`), QA ilk denemede geçti (85/100), **toplam 1 görsel** · üretilen
+  görselde gerçek etiket birebir korunmuş ("%100 Gıda", "BADEM UNU / ALMOND
+  FLOUR", "Net Ağırlık: 250g").
+  **Yan kazanım:** hiç test edilmemiş **QA retry döngüsü** de böylece çalıştırıldı.
 - [x] **O2 — Ölü kod temizliği.** ✅ ÇÖZÜLDÜ (kısmen düzeltildi)
   Silinenler: `agents/DataAnalyst.ts`, `agents/EngagementSpecialist.ts`,
   `agents/ClientLiaison.ts`.
@@ -213,30 +231,30 @@ uç testi yapıldı), Instagram/LinkedIn'e GERÇEK yayın (kimlik bilgisi yok).
   `LANGFUSE_PUBLIC_KEY=pk-lf-...` · `LANGFUSE_SECRET_KEY=sk-lf-...` ·
   `LANGFUSE_HOST=https://cloud.langfuse.com`
 - [x] **O7 — `maxPostsPerPlan` üretim adedini sınırlayamıyor.** ✅ ÇÖZÜLDÜ 2026-09-11 → bkz. **K7**
-- [ ] **O10 — Dashboard sayfalarında fail-open kapsam (YENİ, kısmen kapatıldı).**
+- [x] **O10 — Dashboard sayfalarında fail-open kapsam.** ✅ ÇÖZÜLDÜ
   4 sayfa `where: orgId ? {...} : {}` kullanıyordu — kimlik çözülemezse TÜM
   org'ların verisi. Middleware arkasında oldukları için sömürülemiyordu ama tek
   bir middleware regresyonu doğrudan çapraz-kiracı sızıntısına çevirirdi.
   **Yapılan:** `lib/session.ts` → `getScope()` (fail-closed) eklendi;
   dashboard/brands/plans/settings ona bağlandı. ✅
-- [ ] **O11 — DataAnalystV2 kararsız (YENİ).** Aynı girdiyle bir çalıştırmada
+- [x] **O11 — DataAnalystV2 kararsız.** ✅ ÇÖZÜLDÜ — kök sebep: şema modelden `agentVersion: z.literal("v2.1")` ve ISO zaman damgası istiyordu (içerik değil defter tutma alanı); model sapınca Zod tüm yanıtı reddedip iki denemeyi de yakıyordu. Artık kod dolduruyor. Eski açıklama: Aynı girdiyle bir çalıştırmada
   başarılı, diğerinde `2 denemede de geçerli JSON üretilemedi`. Bloklayıcı değil
   (orchestrator devam ediyor) ama her başarısızlık 2 premium çağrı harcıyor.
   Şema/prompt sadeleştirmesi veya daha toleranslı parse gerek.
-- [ ] **O12 — `tsx` web paketinde kurulu değil (YENİ).** Paket kökündeki bakım
+- [x] **O12 — `tsx` web paketinde kurulu değil.** ✅ ÇÖZÜLDÜ — devDependency eklendi, `pnpm exec tsx` çalışıyor. Eski açıklama: Paket kökündeki bakım
   script'leri başlığında `npx tsx <dosya>` yazıyor ama tsx yalnızca
   `packages/worker`'da kurulu. Script'ler doğrudan çalıştırılamıyor; şimdilik
   `packages/worker/node_modules/.bin/tsx` ile çalışıyor. `web`'e devDependency
   olarak eklenmeli.
-- [ ] **O13 — `recaption-posts.ts` + `retry-post.ts` eski motorda (eski O8).**
+- [x] **O13 — Bakım script'leri eski motorda.** ✅ ÇÖZÜLDÜ — `recaption-posts.ts` ContentWriter'a geçirildi (ayrıca kalite eşiğini geçemeyen metni artık `needs_human` yapıyor, koşulsuz `client_review` değil); `retry-post.ts` yorumu düzeltildi. Eski açıklama:
   Ana hat ve iki revizyon ucu ContentWriter kullanırken bu kök seviyesi
   script'ler hâlâ `CopywriterAgent` çağırıyor → farklı formatta metin üretirler.
-- [ ] **O14 — Caption içine hashtag gömülüyor (YENİ).** Şema yorumu
+- [x] **O14 — Caption içine hashtag gömülüyor.** ✅ ÇÖZÜLDÜ — prompt zaten "gömme" diyordu ama model uymuyordu (tutarsız çıktı). `stripInlineHashtags()` kod tarafında zorluyor: etiketi silmek yerine `#` kaldırıp camelCase'i bölüyor ("#BademUnu ile" → "Badem Unu ile"), 7 vakalık test. Eski açıklama: Şema yorumu
   `caption: Sadece gövde metin (hashtag gömülü değil)` diyor ama ContentWriter
   caption'ın İÇİNE de hashtag koyuyor (`#BademUnu`, `#Glutensiz`) ve ayrıca
   `hashtags` alanını dolduruyor. Instagram'da geçerli bir stil ama tasarım
   belgesiyle çelişiyor — hangisi doğru, karar verilmeli.
-- [ ] **O9 — Next 16 `middleware` konvansiyonu deprecate.**
+- [x] **O9 — Next 16 `middleware` konvansiyonu deprecate.** ✅ ÇÖZÜLDÜ — `src/middleware.ts` → `src/proxy.ts`; 18 kontrollük kimlik matrisiyle doğrulandı. Eski açıklama:
   Dev sunucu uyarısı: *"The `middleware` file convention is deprecated. Please use
   `proxy` instead."* Şu an çalışıyor ama gelecek major'da kırılır.
 
@@ -246,11 +264,11 @@ uç testi yapıldı), Instagram/LinkedIn'e GERÇEK yayın (kimlik bilgisi yok).
   `imagenEnabled: true`; `prioritySupport` sadece Agency'de true ama kodda
   karşılığı olan davranış yok (destek biletleri planı hiç okumuyor). Kod eklemek
   şu an ölü kod üretir — **iş kararı bekliyor.**
-- [ ] **Revize akışında kalite eşiği atlanabiliyor.** EditorInChief postu
+- [x] **Revize akışında kalite eşiği atlanabiliyor.** ✅ ÇÖZÜLDÜ — `postActions.requestRevision` artık EditorInChief postu `NEEDS_REWRITE`'ta bırakmışsa `NEEDS_HUMAN`'a düşürüyor. Eski açıklama: EditorInChief postu
   `NEEDS_REWRITE` bırakıp `true` dönerse route yine de `CLIENT_REVIEW`'e alıyor —
   eşiği geçemeyen metin müşteriye gidiyor. Orchestrator bunu `NEEDS_HUMAN`'a
   düşürerek doğru yönetiyor; revizyon yolu aynı korumaya sahip değil.
-- [ ] **`safeFetch` yanıt gövdesi sınırsız.** `llm.ts`'te `res.arrayBuffer()`
+- [x] **`safeFetch` yanıt gövdesi sınırsız.** ✅ ÇÖZÜLDÜ — `readLimited()` eklendi (Content-Length ön elemesi + akış sayımı, yalan CL ile bypass edilemez, sınır aşımında bağlantı iptal). Vision 8 MB, katalog HTML 5 MB / görsel 8 MB. 4 vakalık test. Eski açıklama: `llm.ts`'te `res.arrayBuffer()`
   boyut sınırı olmadan base64'e çevriliyor → dış kontrollü URL çok büyük dosya
   döndürüp bellek şişirebilir. `MAX_BYTES` ile kapatılabilir.
 - [ ] **`safeFetch` DNS TOCTOU'ya tam kapalı değil.** `dns.lookup` ile doğrulanan
@@ -258,13 +276,37 @@ uç testi yapıldı), Instagram/LinkedIn'e GERÇEK yayın (kimlik bilgisi yok).
   çözüm: IP'ye bağlanıp `Host` header'ı set etmek veya custom `lookup` hook'u.
 - [ ] **Rate limit bellek-içi.** PM2 cluster veya çok-instance'ta sayaçlar
   paylaşılmıyor → limit instance sayısıyla çarpılır. Redis tabanlı limiter gerek.
-- [ ] `User.role` şema yorumu `owner|admin|member` diyor, kod her yerde
+- [x] ✅ ÇÖZÜLDÜ — `User.role` şema yorumu `owner|admin|member` diyordu, kod her yerde
   **`superadmin`** kontrol ediyor → dokümantasyon drift'i.
 - [ ] `runningOnboardings` Set'i process-içi; web ve worker ayrı process olduğu
   için çift tetiklenme koruması aslında paylaşılmıyor.
 - [ ] `startImageGenerationWithRetry` job içinde 60+120 sn `sleep` yapıyor.
   Kilit yenilendiği için stall olmaz ama bir concurrency slotunu ~3.5 dk tutar.
-- [ ] 5 high transitive açık: `protobufjs` ← `@google/genai` (gRPC).
+- [x] **BAĞIMLILIK AÇIKLARI — 77 → 1.** ✅ ÇÖZÜLDÜ 2026-09-11
+  > ⚠️ **Bu dosyadaki eski kayıt YANLIŞTI.** "5 high protobufjs" yazıyordu;
+  > gerçek tablo **5 KRİTİK · 31 high · 36 orta · 5 düşük = 77** idi ve
+  > kritiklerin ikisi doğrudan kimlik doğrulama katmanındaydı.
+  **Bulunan kritikler:**
+  - `next` 16.2.9 → **Windows sunucularda kimlik doğrulamasız RCE** (bu makine Windows)
+  - `next` → **Middleware/Proxy bypass: App Router + Turbopack** (tam bizim kurulumumuz)
+  - `next-auth` beta.31 → **yapılandırma hatasında auth kontrollerinin FAIL-OPEN olması**
+    (`proxy.ts`'teki `if (!req.auth)` tam bu desen)
+  - `@auth/core` → **homoglyph `@` ile email doğrulama bypass** (hesap ele geçirme)
+  - `sharp` 0.34.5 → libvips/libheif CVE'leri (dış görselleri sharp ile işliyoruz)
+  **Yapılan:** `next` 16.2.9→**16.3.4**, `next-auth` beta.31→**beta.32**,
+  `sharp` 0.34.5→**0.35.4**; ayrıca kökteki pnpm override listesi 4'ten **19**'a
+  çıkarıldı (protobufjs, undici, nanoid, js-yaml, postcss, brace-expansion ×2,
+  qs, dompurify, esbuild, hono, @hono/node-server, browserslist, babel vb.).
+  **Sonuç: kritik 0, high 0, orta 1, düşük 0.**
+  **Doğrulama:** `tsc` 0 hata · **production build başarılı** (çıktıda
+  `ƒ Proxy (Middleware)`) · **20/20 kontrollük nihai matris** (kimlik kapısı,
+  giriş, IDOR, rapor, Bull-Board, portal) · Playwright tarayıcı testi 5/5.
+- [ ] **Kalan tek açık: `uuid` (orta) — bilinçli kabul.**
+  Yol: `@google-cloud/vertexai → google-auth-library → gaxios → uuid@9`.
+  Açık yalnızca **v3/v5/v6'ya `buf` parametresi verildiğinde** tetikleniyor;
+  gaxios sadece `v4()` (rastgele) çağırıyor → **bizim kullanımımızda erişilemez.**
+  9→11 major bump'ı zorlamak google-auth-library'yi kırma riski taşır.
+- [x] ~~5 high transitive açık: `protobufjs` ← `@google/genai` (gRPC).~~ ✅ override ile kapatıldı.
   Tehdit modelinde sömürülemez (sadece Google yanıtları parse ediliyor).
   Çözümü `@google/genai` 1.52 → 2.x **MAJOR** migration — bilinçli ertelendi.
 - [ ] Activity ekranında otomatik yenileme (SSE/polling) yok — manuel refresh.
@@ -410,7 +452,9 @@ cd packages\web ; npx prisma db push ; npx prisma generate
 
 | Tarih | Yapılan |
 |---|---|
-| 2026-09-11 | **Adım 1→7 uçtan uca canlı test** (görsel: tam 1 adet, kredi kısıtı). 4 KRİTİK bulgu bulundu ve kapatıldı: K4 görseller ölü klasöre yazılıyordu · K5 çapraz-kiracı plan IDOR'u · K6 Publisher sahte "yayınlandı" · K7 gönderi kotası uygulanmıyordu (16/12). Ayrıca O10 fail-open kapsam düzeltildi, `getScope()` eklendi, AgentLog durum türetmesi genişletildi (11 vakalık test), Zod mesajları Türkçeleştirildi. 4 yeni açık bulgu: O11 DataAnalystV2 kararsız · O12 tsx eksik · O13 eski motor script'leri · O14 caption/hashtag çelişkisi. `tsc` 0 hata. |
+| 2026-09-11 (3) | **Bağımlılık açıkları: 77 → 1.** `pnpm audit` çalıştırılınca bu dosyadaki "5 high protobufjs" kaydının yanlış olduğu ortaya çıktı: gerçekte **5 KRİTİK + 31 high** vardı ve ikisi kimlik doğrulama katmanındaydı (Next Windows RCE, Next Turbopack proxy bypass, next-auth fail-open, @auth/core homoglyph bypass, sharp libvips CVE'leri). next 16.2.9→16.3.4, next-auth beta.31→beta.32, sharp 0.34.5→0.35.4 + override listesi 4→19. Kritik 0, high 0. Production build başarılı, 20/20 nihai matris, Playwright 5/5. |
+| 2026-09-11 (2) | **Açık bulguların temizliği.** O1 (ürün görseli indirme kodda sabit KAPALIYDI → "ürünü görerek üret" erişilemezdi; iki maliyet profili ayrıştırıldı, canlı doğrulandı: gerçek paket etiketi korunarak 1 görsel üretildi), O9 (middleware→proxy, 18 kontrollük kimlik matrisi), O10 (fail-closed `getScope()`), O11 (DataAnalystV2 kararsızlığının kök sebebi: modelden defter tutma alanı isteniyordu), O12 (tsx), O13 (bakım script'leri ContentWriter'a), O14 (`stripInlineHashtags`, 7 test), revizyon kalite eşiği, `readLimited()` boyut sınırı (4 test), `User.role` şema yorumu. **Playwright ile gerçek tarayıcı portal testi 8/8.** tsc 0 hata, 8 kontrollük regresyon paketi temiz. |
+| 2026-09-11 (1) | **Adım 1→7 uçtan uca canlı test** (görsel: tam 1 adet, kredi kısıtı). 4 KRİTİK bulgu bulundu ve kapatıldı: K4 görseller ölü klasöre yazılıyordu · K5 çapraz-kiracı plan IDOR'u · K6 Publisher sahte "yayınlandı" · K7 gönderi kotası uygulanmıyordu (16/12). Ayrıca O10 fail-open kapsam düzeltildi, `getScope()` eklendi, AgentLog durum türetmesi genişletildi (11 vakalık test), Zod mesajları Türkçeleştirildi. 4 yeni açık bulgu: O11 DataAnalystV2 kararsız · O12 tsx eksik · O13 eski motor script'leri · O14 caption/hashtag çelişkisi. `tsc` 0 hata. |
 | 2026-09-08 (2) | **Düzeltme paketi — 3 paralel alt-ajan + orkestratör.** K1/K2/K3 + Y1/Y2/Y3 + O2/O3/O4/O5 kapatıldı. Yeni `lib/postActions.ts` ile onay/revizyon mantığındaki ikizlik giderildi (O3'ün kök sebebi). Müşteri portalı uçtan uca canlı doğrulandı (IDOR 403 dahil, test verisi geri alındı). `tsc --noEmit` 0 hata. 3 yeni bulgu açıldı: O7, O8, O9. |
 | 2026-09-08 (1) | **Uçtan uca tam inceleme.** 3 kritik + 3 yüksek + 6 orta bulgu tespit edildi. Müşteri portalının iki ayrı sebeple tamamen kırık olduğu canlı curl ile doğrulandı (K1, K2). `NEXTAUTH_URL` port uyuşmazlığı (K3). Bu durum dosyası oluşturuldu. |
 | 2026-08-24 | Dashboard/plans/UI iyileştirmeleri + gözlemlenebilirlik modülü (`211b91a`) |
