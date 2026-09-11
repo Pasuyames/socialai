@@ -17,10 +17,37 @@ import {
 //   - Onboarding'de DataMiner üzerinden otomatik
 //   - Yeni ürün eklendiğinde manuel/zamanlı tetikleme: new ProductCuratorAgent().execute(brandId)
 
+/**
+ * Senkronizasyon seçenekleri — maliyet profilleri AYRIŞTIRILDI.
+ *
+ * Bu iki bayrak eskiden çağrı yerinde `false` olarak SABİTLENMİŞTİ, yani
+ * `sync-products` ucu hiçbir koşulda ürün görseli indiremiyordu. Sonuç:
+ * `public/scraped-products` boş kalıyor, ImageGenerator'ın "gerçek paketi
+ * referans ver" modu hiç devreye giremiyor ve sistem sessizce metin→görsele
+ * düşüyordu — yani ürünü görerek üretim özelliği yapısal olarak ERİŞİLEMEZDİ.
+ *
+ * İkisinin maliyeti aynı değil:
+ *   downloadImages — sadece HTTP GET + disk yazma, LLM MALİYETİ YOK.
+ *                    Referanslı görsel üretiminin ön koşulu. Varsayılan AÇIK.
+ *   analyzeImages  — ürün başına Gemini Vision çağrısı (görsel hafıza).
+ *                    Gerçek para harcar. Varsayılan KAPALI, açık rıza ister.
+ */
+export interface ProductSyncOptions {
+  /** Ürün paketi görsellerini indir (LLM maliyeti YOK). Varsayılan: true */
+  downloadImages?: boolean;
+  /** Yeni ürünleri Gemini Vision ile analiz et (ÜCRETLİ). Varsayılan: false */
+  analyzeImages?: boolean;
+}
+
 export class ProductCuratorAgent {
   private agentName = "Product Curator (Ürün Küratörü)";
 
-  async execute(brandId: number): Promise<{ success: boolean; newCount: number; total: number; error?: string }> {
+  async execute(
+    brandId: number,
+    opts: ProductSyncOptions = {},
+  ): Promise<{ success: boolean; newCount: number; total: number; analyzedCount?: number; error?: string }> {
+    const downloadImages = opts.downloadImages ?? true;
+    const analyzeImages  = opts.analyzeImages  ?? false;
     try {
       const brand = await prisma.brand.findUnique({ where: { id: brandId } });
       if (!brand) throw new Error("Marka bulunamadı.");
@@ -34,19 +61,17 @@ export class ProductCuratorAgent {
       // Mevcut (analiz edilmiş) katalogu yükle
       const existing = this.existingCatalog(brand.rawScrapedData);
 
-      // Güncel katalogu çek — SAF METİN modu (görsel link/indirme yok)
-      const fresh = await scrapeProductCatalog(url, { images: false });
+      const fresh = await scrapeProductCatalog(url, { images: downloadImages });
       if (fresh.length === 0) {
         await this.log(brandId, "UYARI: Sitede ürün bulunamadı (sitemap/JSON-LD boş).");
         return { success: false, newCount: 0, total: 0, error: "Ürün bulunamadı." };
       }
 
-      // Yeni ürünleri tespit et, eskileri koru — Gemini Vision analizi devre dışı
       const { catalog, newCount, analyzedCount } = await curateCatalog(
         fresh,
         existing,
         (msg) => this.log(brandId, msg),
-        { analyzeImages: false },
+        { analyzeImages },
       );
 
       // rawScrapedData'yı güncelle (mevcut yapıyı koru, katalogu değiştir)
@@ -63,13 +88,15 @@ export class ProductCuratorAgent {
         data: { rawScrapedData: JSON.stringify(scraped) },
       });
 
+      const withImage = catalog.filter((p: ProductInfo) => !!(p as any).localImagePath).length;
       await this.log(
         brandId,
-        `Senkronizasyon tamamlandı: ${catalog.length} ürün (${newCount} yeni, saf metin — görsel modülü devre dışı).`,
+        `Senkronizasyon tamamlandı: ${catalog.length} ürün (${newCount} yeni` +
+          `, ${downloadImages ? `${withImage} paket görseli indirildi` : "görsel indirme kapalı"}` +
+          `, ${analyzeImages ? `${analyzedCount} görsel analiz edildi` : "Vision analizi kapalı"}).`,
       );
-      void analyzedCount; // görsel analizi kapalı: her zaman 0
 
-      return { success: true, newCount, total: catalog.length };
+      return { success: true, newCount, total: catalog.length, analyzedCount };
 
     } catch (err: any) {
       await this.log(brandId, `BAŞARISIZ: ${err.message}`);
