@@ -48,19 +48,58 @@ function publicDir(): string {
   return dir;
 }
 
+/**
+ * Üretim sonucu. `retryable` ayrımı KRİTİK:
+ *
+ * Orchestrator eskiden yalnızca boolean görüyordu ve HER başarısızlıkta
+ * 60 sn + 120 sn bekliyordu. Oysa hataların bir kısmı DETERMİNİSTİK:
+ * `imagePrompt` yoksa API'ye hiç çıkılmadan `false` dönüyor, üç deneme de
+ * aynı anda başarısız oluyor ve bir worker slotu ~3 dakika boşa harcanıyordu
+ * (concurrency=2'de kuyruğun yarısı).
+ *
+ *   retryable: false → girdi/yapılandırma eksik. Beklemek ASLA işe yaramaz.
+ *   retryable: true  → kota/ağ/geçici model hatası. Beklemek anlamlı.
+ */
+export type ImageGenResult =
+  | { ok: true }
+  | { ok: false; retryable: boolean; reason: string };
+
+/** Hata mesajından geçici (yeniden denenebilir) olup olmadığını çıkarır. */
+function isRetryableError(message: string): boolean {
+  const m = message.toLowerCase();
+  return (
+    m.includes("429") || m.includes("quota") || m.includes("resource_exhausted") ||
+    m.includes("rate limit") || m.includes("503") || m.includes("500") ||
+    m.includes("unavailable") || m.includes("deadline") || m.includes("timeout") ||
+    m.includes("etimedout") || m.includes("econnreset") || m.includes("socket") ||
+    m.includes("fetch failed") || m.includes("network")
+  );
+}
+
 export class ImageGeneratorAgent {
   private agentName = "Image Generator (Görsel Üretici — Nano Banana 2)";
 
+  /** Geriye dönük uyumlu boolean sarmalayıcı. */
   async execute(postId: number): Promise<boolean> {
+    return (await this.run(postId)).ok;
+  }
+
+  async run(postId: number): Promise<ImageGenResult> {
     try {
       const post = await prisma.post.findUnique({
         where: { id: postId },
         include: { plan: { include: { brand: true } } },
       });
 
-      if (!post?.imagePrompt && !post?.productImagePath) {
+      if (!post) {
+        await this.log(postId, "HATA: Gönderi bulunamadı.");
+        return { ok: false, retryable: false, reason: "Gönderi bulunamadı." };
+      }
+
+      if (!post.imagePrompt && !post.productImagePath) {
+        // Deterministik: PromptEngineer çalışmadan tekrar denemek anlamsız.
         await this.log(postId, "HATA: Görsel prompt veya ürün görseli yok. PromptEngineer önce çalışmalı.");
-        return false;
+        return { ok: false, retryable: false, reason: "Görsel prompt veya ürün görseli yok." };
       }
 
       const platform  = post.platform ?? PLATFORM.INSTAGRAM;
@@ -119,11 +158,16 @@ export class ImageGeneratorAgent {
         `Görsel hazır. Feed 4:5: ${path.basename(feedPath)}` +
           (storyPath ? ` | Story 9:16 (feed'den türetildi): ${path.basename(storyPath)}` : ""),
       );
-      return true;
+      return { ok: true };
 
     } catch (err: any) {
-      await this.log(postId, `BAŞARISIZ: ${err.message}`);
-      return false;
+      const message = err?.message ?? "bilinmeyen hata";
+      const retryable = isRetryableError(message);
+      await this.log(
+        postId,
+        `BAŞARISIZ${retryable ? "" : " (kalıcı hata — tekrar denenmeyecek)"}: ${message}`,
+      );
+      return { ok: false, retryable, reason: message };
     }
   }
 

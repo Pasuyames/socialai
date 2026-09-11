@@ -6,6 +6,7 @@ import path from "path";
 import { PLAN_STATUS } from "../constants";
 import { generateSummaryPdf, type SummaryReportData } from "../pdf/pdfme-summary";
 import { REPORTS_DIR, ensureReportsDir } from "../reports";
+import { cleanAgentError } from "../agentError";
 
 const PAGE_W = 595.28;
 const MARGIN  = 36;
@@ -186,7 +187,7 @@ export class ReportGeneratorAgent {
       return true;
 
     } catch (err: any) {
-      await this.log(planId, `Özet PDF BAŞARISIZ: ${err.message}`);
+      await this.log(planId, `Özet PDF BAŞARISIZ: ${cleanAgentError(err)}`);
       return false;
     }
   }

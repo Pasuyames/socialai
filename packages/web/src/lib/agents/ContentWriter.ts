@@ -4,6 +4,7 @@ import { generateJSON, type TokenUsage } from "../llm";
 import { fenceUntrusted, cleanText } from "../security/sanitize";
 import { matchProduct, type ProductInfo } from "../scrapers/ProductCatalog";
 import { POST_STATUS } from "../constants";
+import { cleanAgentError } from "../agentError";
 
 // ─── Content Writer (İçerik Yazarı) ───────────────────────────────────────────
 //
@@ -161,7 +162,7 @@ export class ContentWriterAgent {
       return true;
 
     } catch (err: any) {
-      await this.log(postId, `BAŞARISIZ: ${err.message}`);
+      await this.log(postId, `BAŞARISIZ: ${cleanAgentError(err)}`);
       return false;
     }
   }

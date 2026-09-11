@@ -2,6 +2,7 @@ import { z } from "zod";
 import { generateJSON } from "../llm";
 import prisma from "../db";
 import { POST_STATUS } from "../constants";
+import { cleanAgentError } from "../agentError";
 
 // ─── Şema ─────────────────────────────────────────────────────────────────────
 
@@ -93,7 +94,7 @@ export class EditorInChiefAgent {
       return true;
 
     } catch (err: any) {
-      await this.log(postId, `BAŞARISIZ: ${err.message}`);
+      await this.log(postId, `BAŞARISIZ: ${cleanAgentError(err)}`);
       return false;
     }
   }

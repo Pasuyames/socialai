@@ -1,4 +1,5 @@
 import prisma from "../db";
+import { cleanAgentError } from "../agentError";
 import {
   scrapeProductCatalog,
   curateCatalog,
@@ -99,7 +100,7 @@ export class ProductCuratorAgent {
       return { success: true, newCount, total: catalog.length, analyzedCount };
 
     } catch (err: any) {
-      await this.log(brandId, `BAŞARISIZ: ${err.message}`);
+      await this.log(brandId, `BAŞARISIZ: ${cleanAgentError(err)}`);
       return { success: false, newCount: 0, total: 0, error: err.message };
     }
   }

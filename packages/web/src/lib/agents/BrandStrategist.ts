@@ -3,6 +3,7 @@ import { generateJSON } from "../llm";
 import { cleanText, fenceUntrusted } from "../security/sanitize";
 import prisma from "../db";
 import { getIndustryConfig } from "../constants/industries";
+import { cleanAgentError } from "../agentError";
 
 // ─── Zod Şeması ───────────────────────────────────────────────────────────────
 
@@ -77,7 +78,7 @@ export class BrandStrategistAgent {
       return true;
 
     } catch (err: any) {
-      await this.log(brandId, `BAŞARISIZ: ${err.message}`);
+      await this.log(brandId, `BAŞARISIZ: ${cleanAgentError(err)}`);
       return false;
     }
   }

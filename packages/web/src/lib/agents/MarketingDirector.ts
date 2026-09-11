@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { generateJSON } from "../llm";
 import prisma from "../db";
+import { cleanAgentError } from "../agentError";
 
 // ─── Zod Şeması ───────────────────────────────────────────────────────────────
 
@@ -65,7 +66,7 @@ export class MarketingDirectorAgent {
       return true;
 
     } catch (err: any) {
-      await this.log(planId, `BAŞARISIZ: ${err.message}`);
+      await this.log(planId, `BAŞARISIZ: ${cleanAgentError(err)}`);
       return false;
     }
   }

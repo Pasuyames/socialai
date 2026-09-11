@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import prisma from "@/lib/db";
 import { Activity, Filter, AlertTriangle, CheckCircle2, XCircle, Info } from "lucide-react";
+import { AutoRefresh } from "./AutoRefresh";
 
 export const dynamic = "force-dynamic";
 
@@ -95,6 +96,11 @@ export default async function ActivityPage({ searchParams }: { searchParams: Pro
         <div>
           <h1 className="text-lg font-bold text-white">Aktivite Akışı (AgentLog)</h1>
           <p className="text-xs text-muted-foreground">Tüm ajan eylemleri — canlı denetim izi</p>
+        </div>
+        {/* Otomatik yenileme — varsayılan KAPALI (denetim ekranı okunurken
+            listenin altından kayması istenmez), sekme arka plandayken durur. */}
+        <div className="ml-auto">
+          <AutoRefresh />
         </div>
       </div>
 

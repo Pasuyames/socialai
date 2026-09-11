@@ -3,6 +3,7 @@ import { chromium } from "playwright";
 import prisma from "../db";
 import { scrapeProductCatalog, curateCatalog, type ProductInfo } from "../scrapers/ProductCatalog";
 import { assertSafeUrl, assertSafeUrlResolved, safeFetch } from "../security/ssrf";
+import { cleanAgentError } from "../agentError";
 
 export class DataMinerAgent {
   private agentName = "Data Miner (Veri Madencisi)";
@@ -55,7 +56,7 @@ export class DataMinerAgent {
       return true;
 
     } catch (err: any) {
-      await this.log(brandId, `BAŞARISIZ: ${err.message}`);
+      await this.log(brandId, `BAŞARISIZ: ${cleanAgentError(err)}`);
       return false;
     }
   }

@@ -5,6 +5,7 @@ import { POST_STATUS, PLATFORM } from "../constants";
 import { getIndustryConfig } from "../constants/industries";
 import { getBrandContext } from "../memory";
 import { matchProduct, buildVisualSignature, type ProductInfo } from "../scrapers/ProductCatalog";
+import { cleanAgentError } from "../agentError";
 
 // ─── Şema ─────────────────────────────────────────────────────────────────────
 
@@ -135,7 +136,7 @@ Bu sorunları gidererek daha güçlü, marka kimliğine daha uyumlu bir imagePro
       return true;
 
     } catch (err: any) {
-      await this.log(postId, `BAŞARISIZ: ${err.message}`);
+      await this.log(postId, `BAŞARISIZ: ${cleanAgentError(err)}`);
       return false;
     }
   }

@@ -1,5 +1,6 @@
 import prisma from "../db";
 import { POST_STATUS, PLATFORM } from "../constants";
+import { cleanAgentError } from "../agentError";
 
 interface PostMetrics {
   postId: number;
@@ -74,7 +75,7 @@ export class PerformanceTrackerAgent {
       return true;
 
     } catch (err: any) {
-      await this.log(planId, `BAŞARISIZ: ${err.message}`);
+      await this.log(planId, `BAŞARISIZ: ${cleanAgentError(err)}`);
       return false;
     }
   }

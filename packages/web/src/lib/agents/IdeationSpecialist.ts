@@ -4,6 +4,7 @@ import prisma from "../db";
 import { POST_STATUS, PLAN_STATUS, PLATFORM } from "../constants";
 import { getIndustryConfig } from "../constants/industries";
 import { getPlanLimits } from "../subscription";
+import { cleanAgentError } from "../agentError";
 
 // ─── Zod Şeması ───────────────────────────────────────────────────────────────
 
@@ -141,7 +142,7 @@ export class IdeationSpecialistAgent {
       return true;
 
     } catch (err: any) {
-      await this.log(planId, `BAŞARISIZ: ${err.message}`);
+      await this.log(planId, `BAŞARISIZ: ${cleanAgentError(err)}`);
       return false;
     }
   }

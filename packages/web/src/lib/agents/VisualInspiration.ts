@@ -1,5 +1,6 @@
 import prisma from "../db";
 import { generateTextWithVision } from "../llm";
+import { cleanAgentError } from "../agentError";
 
 const AGENT_NAME = "Visual Inspiration (Görsel İlham Uzmanı)";
 
@@ -177,7 +178,7 @@ export class VisualInspirationAgent {
       return true;
 
     } catch (err: any) {
-      await this.log(postId, `BAŞARISIZ: ${err.message}`);
+      await this.log(postId, `BAŞARISIZ: ${cleanAgentError(err)}`);
       return true; // bloklayıcı değil
     }
   }

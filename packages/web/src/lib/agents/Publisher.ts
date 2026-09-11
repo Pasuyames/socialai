@@ -2,6 +2,7 @@ import prisma from "../db";
 import fs from "fs";
 import path from "path";
 import { POST_STATUS, PLATFORM } from "../constants";
+import { cleanAgentError } from "../agentError";
 
 // ─── Simülasyon modu ─────────────────────────────────────────────────────────
 //
@@ -81,7 +82,7 @@ export class PublisherAgent {
       return true;
 
     } catch (err: any) {
-      await this.log(postId, `BAŞARISIZ: ${err.message}`);
+      await this.log(postId, `BAŞARISIZ: ${cleanAgentError(err)}`);
       return false;
     }
   }

@@ -4,6 +4,7 @@ import prisma from "../db";
 import fs from "fs";
 import path from "path";
 import { POST_STATUS } from "../constants";
+import { cleanAgentError } from "../agentError";
 
 // ─── Şema ─────────────────────────────────────────────────────────────────────
 
@@ -115,7 +116,7 @@ export class VisualInspectorAgent {
       return true;
 
     } catch (err: any) {
-      await this.log(postId, `BAŞARISIZ: ${err.message}`);
+      await this.log(postId, `BAŞARISIZ: ${cleanAgentError(err)}`);
       return false;
     }
   }

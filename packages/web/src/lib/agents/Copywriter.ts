@@ -2,6 +2,7 @@ import { generateText } from "../llm";
 import prisma from "../db";
 import { POST_STATUS, PLATFORM } from "../constants";
 import { getIndustryConfig } from "../constants/industries";
+import { cleanAgentError } from "../agentError";
 
 // Platforma göre karakter/kelime limitleri
 const PLATFORM_LIMITS: Record<string, { maxWords: number; structure: string }> = {
@@ -91,7 +92,7 @@ export class CopywriterAgent {
       return true;
 
     } catch (err: any) {
-      await this.log(postId, `BAŞARISIZ: ${err.message}`);
+      await this.log(postId, `BAŞARISIZ: ${cleanAgentError(err)}`);
       return false;
     }
   }

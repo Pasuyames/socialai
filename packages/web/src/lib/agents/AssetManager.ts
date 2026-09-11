@@ -2,6 +2,7 @@ import { google } from "googleapis";
 import prisma from "../db";
 import fs from "fs";
 import path from "path";
+import { cleanAgentError } from "../agentError";
 
 interface DriveAsset {
   id:       string;
@@ -69,7 +70,7 @@ export class AssetManagerAgent {
       return { success: true, folderId };
 
     } catch (err: any) {
-      await this.log(brandId, `BAŞARISIZ: ${err.message}`);
+      await this.log(brandId, `BAŞARISIZ: ${cleanAgentError(err)}`);
       return { success: false, error: err.message };
     }
   }

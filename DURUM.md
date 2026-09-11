@@ -8,7 +8,7 @@
 > dosya güncellenir. Kapatılan bulgu `[x]` yapılır ve "Değişiklik Günlüğü"ne
 > tarihli bir satır eklenir. Yeni bulgu çıkarsa ilgili önem tablosuna eklenir.
 
-**Son güncelleme:** 2026-09-11 (5. tur — DNS pinleme + destek/admin uçları sertleştirildi)
+**Son güncelleme:** 2026-09-11 (6. tur — retry sınıflandırma, otomatik yenileme, log temizliği)
 **Son tam inceleme:** 2026-09-08 (kod) · **2026-09-11 (Adım 1→7 canlı uçtan uca test)**
 
 ---
@@ -263,6 +263,18 @@ görselde retry'ın 2./3. turu (QA ilk denemede onayladığı için o dal çalı
 
 ### ⚪ DÜŞÜK / NOT
 
+- [x] **Ajan hataları denetim loguna HAM yığın izi yazıyordu.** ✅ ÇÖZÜLDÜ 2026-09-11
+  21 ajan hatayı olduğu gibi AgentLog'a döküyordu. Gerçek örnek: Prisma hatası
+  Turbopack tarafından sarmalanmış, **920 karakter**, içinde **mutlak dosya
+  yolları**, build iç detayları ve kod çerçevesi; asıl sebep ("Record to update
+  not found") gürültünün en sonunda kaybolmuş. Son 400 kayıtta 4'ü yol sızdırıyordu.
+  `lib/agentError.ts` → `cleanAgentError()`: gürültü satırlarını atar, yolları
+  dosya adına indirger, sarmalayıcı hatalarda ASIL sebebi öne alır, 300 karakterde
+  keser. **21 ajanın tamamına** uygulandı, 8 vakalık test.
+  **Doğrulama:** 920 karakterlik örnek → **123 karakter**, yol yok, sebep korunmuş.
+  *(Geçmişteki 4 kirli kayıt bilerek DÜZELTİLMEDİ — denetim izi geriye dönük
+  değiştirilmez; yalnızca superadmin ekranında görünür.)*
+
 - [ ] **`imagenEnabled` / `prioritySupport` ayırt edici değil.** Üç planda da
   `imagenEnabled: true`; `prioritySupport` sadece Agency'de true ama kodda
   karşılığı olan davranış yok (destek biletleri planı hiç okumuyor). Kod eklemek
@@ -274,9 +286,20 @@ görselde retry'ın 2./3. turu (QA ilk denemede onayladığı için o dal çalı
 - [x] **`safeFetch` yanıt gövdesi sınırsız.** ✅ ÇÖZÜLDÜ — `readLimited()` eklendi (Content-Length ön elemesi + akış sayımı, yalan CL ile bypass edilemez, sınır aşımında bağlantı iptal). Vision 8 MB, katalog HTML 5 MB / görsel 8 MB. 4 vakalık test. Eski açıklama: `llm.ts`'te `res.arrayBuffer()`
   boyut sınırı olmadan base64'e çevriliyor → dış kontrollü URL çok büyük dosya
   döndürüp bellek şişirebilir. `MAX_BYTES` ile kapatılabilir.
-- [ ] **`safeFetch` DNS TOCTOU'ya tam kapalı değil.** `dns.lookup` ile doğrulanan
-  IP ile `fetch`'in bağlandığı IP farklı olabilir (rebinding penceresi). Tam
-  çözüm: IP'ye bağlanıp `Host` header'ı set etmek veya custom `lookup` hook'u.
+- [x] **`safeFetch` DNS TOCTOU (rebinding penceresi).** ✅ ÇÖZÜLDÜ 2026-09-11
+  `dns.lookup` ile doğrulanan IP ile undici'nin fiilen bağlandığı IP farklı
+  olabiliyordu: saldırgan, TTL'i sıfırlanmış kendi alan adında iki sorgu arasında
+  cevabı `127.0.0.1`'e çevirip doğrulamayı atlatabilirdi.
+  **Yapılan:** `resolveAndValidate()` doğrulanan adresleri geri veriyor, `safeFetch`
+  undici `Agent`'ın `connect.lookup` kancasıyla bağlantıyı **tam o IP'ye pinliyor**
+  — ikinci DNS sorgusu yok. IP'yi URL'e yazmak yerine lookup'ı pinlemenin sebebi
+  TLS: SNI ve sertifika doğrulaması gerçek hostname ile kurulmaya devam ediyor.
+  Her redirect hop'u yeniden doğrulanıp yeniden pinleniyor; dispatcher her yolda
+  kapatılıyor (bağlantı sızıntısı yok).
+  **Doğrulama:** gerçek HTTPS 200/344 KB · HTTP→HTTPS yönlendirme izleniyor ·
+  loopback + AWS metadata + özel ağ + localhost hâlâ engelli · **kritik kanıt:
+  toplam 1 DNS sorgusu** · ürün senkronizasyonu yeni safeFetch ile çalışıyor
+  (13 ürün, 12 görsel).
 - [x] **Rate limit bellek-içi — BİLİNÇLİ, mimariyle tutarlı.** ✅ değerlendirildi
   `ecosystem.config.js` web'i `instances: 1` çalıştırıyor ve gerekçesi yazılı:
   *"SQLite + oturum tutarlılığı için tekil"*. Web'i yatay ölçeklemek zaten önce
@@ -288,7 +311,17 @@ görselde retry'ın 2./3. turu (QA ilk denemede onayladığı için o dal çalı
   **`superadmin`** kontrol ediyor → dokümantasyon drift'i.
 - [x] ✅ değerlendirildi — `runningOnboardings` Set'i process-içi, AMA onboarding yalnızca web'den tetikleniyor (worker `startPostCreation`/`startImageGenerationWithRetry` çağırıyor) ve web tek instance. Bugün etkili. Yatay ölçeklemede Redis kilidi gerekir. Eski açıklama: web ve worker ayrı process olduğu
   için çift tetiklenme koruması aslında paylaşılmıyor.
-- [ ] `startImageGenerationWithRetry` job içinde 60+120 sn `sleep` yapıyor.
+- [x] **`startImageGenerationWithRetry` boşa bekliyordu.** ✅ ÇÖZÜLDÜ 2026-09-11
+  `ImageGeneratorAgent.execute` her hatada çıplak `false` dönüyordu, bu yüzden
+  orkestratör **kalıcı** hatayı (prompt yok → API'ye hiç çıkılmıyor) **geçici**
+  hatadan (kota/ağ) ayıramıyor ve HER ikisinde de 60+120 sn bekliyordu → bir
+  worker slotu ~3 dakika boşa (concurrency=2'de kuyruğun yarısı).
+  Artık `run()` `{ok, retryable, reason}` dönüyor; kalıcı hatada beklemeden
+  `needs_human`'a düşülüyor, geçici hatada backoff sürüyor. Bekleme süreleri
+  `IMAGE_QUOTA_WAIT_MS` / `IMAGE_QC_WAIT_MS` ile ayarlanabilir.
+  **Doğrulama:** prompt'suz post → **180 sn yerine 0.1 sn**, API çağrısı yok,
+  maliyet yok, statü doğru.
+  Eski açıklama: `startImageGenerationWithRetry` job içinde 60+120 sn `sleep` yapıyor.
   Kilit yenilendiği için stall olmaz ama bir concurrency slotunu ~3.5 dk tutar.
 - [x] **BAĞIMLILIK AÇIKLARI — 77 → 1.** ✅ ÇÖZÜLDÜ 2026-09-11
   > ⚠️ **Bu dosyadaki eski kayıt YANLIŞTI.** "5 high protobufjs" yazıyordu;
@@ -317,7 +350,13 @@ görselde retry'ın 2./3. turu (QA ilk denemede onayladığı için o dal çalı
 - [x] ~~5 high transitive açık: `protobufjs` ← `@google/genai` (gRPC).~~ ✅ override ile kapatıldı.
   Tehdit modelinde sömürülemez (sadece Google yanıtları parse ediliyor).
   Çözümü `@google/genai` 1.52 → 2.x **MAJOR** migration — bilinçli ertelendi.
-- [ ] Activity ekranında otomatik yenileme (SSE/polling) yok — manuel refresh.
+- [x] **Activity ekranında otomatik yenileme yoktu.** ✅ ÇÖZÜLDÜ 2026-09-11
+  `AutoRefresh` bileşeni: "Yenile" + "Otomatik" (10/30/60 sn) + son güncelleme
+  saati. `router.refresh()` kullanır (tam sayfa yenileme yok → filtre, kaydırma
+  ve odak korunur). **Varsayılan KAPALI** (denetim ekranı okunurken liste
+  kaymasın) ve **sekme arka plandayken durur** (boşuna DB sorgusu yok).
+  **Doğrulama:** Playwright ile 10 kontrol + filtre doğruluğu ayrıca kanıtlandı
+  (FAILED → 50/50 "Başarısız", SUCCESS → 50/50 "Başarılı", DB ile tutarlı).
 
 ---
 
@@ -460,6 +499,7 @@ cd packages\web ; npx prisma db push ; npx prisma generate
 
 | Tarih | Yapılan |
 |---|---|
+| 2026-09-11 (5) | **Retry sınıflandırma + otomatik yenileme + log hijyeni.** ImageGenerator artık kalıcı/geçici hatayı ayırıyor: prompt'suz post **180 sn yerine 0.1 sn**'de insana devrediliyor (worker slotu boşa gitmiyor). Activity ekranına `AutoRefresh` eklendi (varsayılan kapalı, sekme arka plandayken durur). 21 ajanın ham yığın izi döken hata logları `cleanAgentError()` ile temizlendi — 920 karakterlik yol sızdıran kayıt 123 karaktere indi, asıl sebep korundu. tsc 0 hata, 15/15 final regresyon. |
 | 2026-09-11 (4) | **DNS rebinding kapatıldı + hiç test edilmemiş yüzeyler.** `safeFetch` artık bağlantıyı doğrulanan IP'ye **pinliyor** (undici `connect.lookup`) → doğrulama ile bağlantı arasındaki TOCTOU penceresi yok; kanıt: toplam **1 DNS sorgusu**, TLS/SNI bozulmadı. Destek biletleri ve admin uçları ilk kez test edildi → **6 + 4 hata** bulundu (şema dışı `priority`/`category` kabul ediliyordu, 5000 karakter sınırsızdı, obje/bozuk JSON **500 ile çökertiyordu**, olmayan kayıt 404 yerine 500) → hepsi Zod ile kapatıldı, 12/12 + 11/11 doğrulandı. Tüm write uçları bozuk-JSON taramasından geçirildi. Langfuse'un sessiz devre dışılığı artık uyarı basıyor. Rate limit ve onboarding kilidi **gerekçeleriyle** ertelendi (web `instances: 1`, SQLite'a bağlı). |
 | 2026-09-11 (3) | **Bağımlılık açıkları: 77 → 1.** `pnpm audit` çalıştırılınca bu dosyadaki "5 high protobufjs" kaydının yanlış olduğu ortaya çıktı: gerçekte **5 KRİTİK + 31 high** vardı ve ikisi kimlik doğrulama katmanındaydı (Next Windows RCE, Next Turbopack proxy bypass, next-auth fail-open, @auth/core homoglyph bypass, sharp libvips CVE'leri). next 16.2.9→16.3.4, next-auth beta.31→beta.32, sharp 0.34.5→0.35.4 + override listesi 4→19. Kritik 0, high 0. Production build başarılı, 20/20 nihai matris, Playwright 5/5. |
 | 2026-09-11 (2) | **Açık bulguların temizliği.** O1 (ürün görseli indirme kodda sabit KAPALIYDI → "ürünü görerek üret" erişilemezdi; iki maliyet profili ayrıştırıldı, canlı doğrulandı: gerçek paket etiketi korunarak 1 görsel üretildi), O9 (middleware→proxy, 18 kontrollük kimlik matrisi), O10 (fail-closed `getScope()`), O11 (DataAnalystV2 kararsızlığının kök sebebi: modelden defter tutma alanı isteniyordu), O12 (tsx), O13 (bakım script'leri ContentWriter'a), O14 (`stripInlineHashtags`, 7 test), revizyon kalite eşiği, `readLimited()` boyut sınırı (4 test), `User.role` şema yorumu. **Playwright ile gerçek tarayıcı portal testi 8/8.** tsc 0 hata, 8 kontrollük regresyon paketi temiz. |

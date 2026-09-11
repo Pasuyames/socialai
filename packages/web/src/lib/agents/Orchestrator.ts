@@ -16,6 +16,7 @@ import { VisualInspectorAgent }      from "./VisualInspector";
 import { AssetManagerAgent }         from "./AssetManager";
 import { ArchivistAgent }            from "./Archivist";
 import { POST_STATUS, PLAN_STATUS }  from "../constants";
+import { cleanAgentError } from "../agentError";
 
 const PM = "Project Manager (Orkestratör)";
 
@@ -114,7 +115,7 @@ export class Orchestrator {
       return { success: true };
 
     } catch (err: any) {
-      await pmLog("Plan", planId, `Aylık plan BAŞARISIZ: ${err.message}`);
+      await pmLog("Plan", planId, `Aylık plan BAŞARISIZ: ${cleanAgentError(err)}`);
       return { success: false, error: err.message };
     }
   }
@@ -170,7 +171,7 @@ export class Orchestrator {
       return { success: true };
 
     } catch (err: any) {
-      await pmLog("Post", postId, `Gönderi üretimi BAŞARISIZ: ${err.message}`);
+      await pmLog("Post", postId, `Gönderi üretimi BAŞARISIZ: ${cleanAgentError(err)}`);
       return { success: false, error: err.message };
     }
   }
@@ -179,19 +180,40 @@ export class Orchestrator {
 
   static async startImageGenerationWithRetry(postId: number): Promise<{ success: boolean; error?: string }> {
     const MAX_IMG_RETRIES = 3;
+
+    // Bekleme süreleri env ile ayarlanabilir. Bu döngü bir BullMQ worker
+    // slotunu MEŞGUL TUTAR (concurrency=2), bu yüzden beklemeler yalnızca
+    // GERÇEKTEN geçici hatalarda yapılır — aşağıya bak.
+    const QUOTA_WAIT_MS = parseInt(process.env.IMAGE_QUOTA_WAIT_MS ?? "60000", 10);
+    const QC_WAIT_MS    = parseInt(process.env.IMAGE_QC_WAIT_MS    ?? "30000", 10);
+
     await pmLog("Post", postId, "Görsel üretim ve QA döngüsü başlatıldı.");
 
     const imgGen    = new ImageGeneratorAgent();
     const inspector = new VisualInspectorAgent();
 
     for (let attempt = 1; attempt <= MAX_IMG_RETRIES; attempt++) {
-      const genOk = await imgGen.execute(postId);
-      if (!genOk) {
-        await pmLog("Post", postId, `Görsel üretim başarısız (deneme ${attempt}).`);
+      const gen = await imgGen.run(postId);
+
+      if (!gen.ok) {
+        // KALICI hata (prompt yok, ürün dosyası yok, yapılandırma eksik):
+        // tekrar denemek sonucu değiştirmez. Eskiden burada da 60+120 sn
+        // bekleniyordu ve deterministik bir hata için worker slotu ~3 dakika
+        // boşa harcanıyordu. Artık hemen insana devrediyoruz.
+        if (!gen.retryable) {
+          await prisma.post.update({ where: { id: postId }, data: { status: POST_STATUS.NEEDS_HUMAN } });
+          await pmLog(
+            "Post", postId,
+            `KRİTİK: Görsel üretilemedi — kalıcı hata, tekrar denenmedi: ${gen.reason}`,
+          );
+          return { success: false, error: gen.reason };
+        }
+
+        await pmLog("Post", postId, `Görsel üretim başarısız (deneme ${attempt}): ${gen.reason}`);
         if (attempt < MAX_IMG_RETRIES) {
-          const waitSec = attempt * 60;
-          await pmLog("Post", postId, `Quota bekleme: ${waitSec}s sonra yeniden deneniyor...`);
-          await new Promise(r => setTimeout(r, waitSec * 1000));
+          const waitMs = QUOTA_WAIT_MS * attempt;
+          await pmLog("Post", postId, `Geçici hata — ${Math.round(waitMs / 1000)}s sonra yeniden deneniyor...`);
+          await new Promise(r => setTimeout(r, waitMs));
         }
         continue;
       }
@@ -204,7 +226,7 @@ export class Orchestrator {
 
       await pmLog("Post", postId, `Görsel reddedildi (deneme ${attempt}) — yeniden üretiliyor.`);
       if (attempt < MAX_IMG_RETRIES) {
-        await new Promise(r => setTimeout(r, 30_000));
+        await new Promise(r => setTimeout(r, QC_WAIT_MS));
       }
     }
 

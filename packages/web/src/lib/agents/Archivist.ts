@@ -1,5 +1,6 @@
 import { generateText } from "../llm";
 import prisma from "../db";
+import { cleanAgentError } from "../agentError";
 
 const AGENT_NAME = "Archivist (Arşivci)";
 
@@ -119,7 +120,7 @@ SADECE JSON dön.`;
       return true;
 
     } catch (err: any) {
-      await this.log(planId, `BAŞARISIZ: ${err.message}`);
+      await this.log(planId, `BAŞARISIZ: ${cleanAgentError(err)}`);
       return false;
     }
   }
